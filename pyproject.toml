@@ -1,0 +1,57 @@
+[project]
+name = "muscle-memory"
+version = "0.1.0"
+description = "LLM discovers a UI flow once, records it as a typed capability, replays it deterministically without the model."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.50",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "openai>=1.60",
+    "instructor>=1.7",
+    "typer>=0.15",
+    "rich>=13.9",
+    "pyyaml>=6.0",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "jinja2>=3.1",
+    "itsdangerous>=2.2",
+    "python-multipart>=0.0.18",
+]
+
+[project.scripts]
+mm = "mm.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-pyyaml",
+    "httpx>=0.28",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mm", "mock_bank"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["mm"]
+mypy_path = "src"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src", "."]

@@ -1,0 +1,24 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# python
+__pycache__/
+*.py[cod]
+.venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+dist/
+build/
+*.egg-info/
+
+# run output (curated runs are copied into evidence/)
+runs/
+*.trace.zip
+
+# os / editor
+.DS_Store
+.idea/
+.vscode/

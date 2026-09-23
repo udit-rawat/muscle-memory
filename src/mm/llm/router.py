@@ -8,8 +8,8 @@ would sit next to banking systems.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
-from typing import TypeVar
+from dataclasses import dataclass, field
+from typing import Generic, TypeVar
 
 import instructor
 from openai import APIConnectionError, APIStatusError, OpenAI, RateLimitError
@@ -30,6 +30,16 @@ class Provider:
     name: str
     model: str
     client: instructor.Instructor
+    extra: dict[str, object] = field(default_factory=dict)  # provider-specific request params
+
+
+@dataclass(frozen=True)
+class LLMCall(Generic[T]):
+    value: T
+    provider: str
+    model: str
+    input_tokens: int
+    output_tokens: int
 
 
 class NoProviderConfigured(RuntimeError):
@@ -47,26 +57,37 @@ class LLMRouter:
         s = settings or get_settings()
         providers: list[Provider] = []
         if key := _real_key(s.groq_api_key):
-            providers.append(Provider("groq", s.mm_primary_model, _client(s.mm_primary_base_url, key)))
+            # Low reasoning effort keeps gpt-oss well inside Groq's free-tier tokens-per-minute.
+            providers.append(Provider("groq", s.mm_primary_model, _client(s.mm_primary_base_url, key),
+                                      {"reasoning_effort": "low"}))
         if key := _real_key(s.gemini_api_key):
             providers.append(Provider("gemini", s.mm_fallback_model, _client(s.mm_fallback_base_url, key)))
         return cls(providers)
 
     def structured(
-        self, response_model: type[T], messages: list[dict[str, object]], max_retries: int = 2
-    ) -> tuple[T, str]:
-        """Return a validated `response_model` instance and the name of the provider that produced it."""
+        self,
+        response_model: type[T],
+        messages: list[dict[str, object]],
+        max_retries: int = 2,
+    ) -> LLMCall[T]:
+        """Validated `response_model` from the first provider that answers.
+
+        On a validation error Instructor re-asks the same provider with the error, up to `max_retries`.
+        """
         last_exc: Exception | None = None
         for p in self.providers:
             try:
-                result = p.client.chat.completions.create(
+                result, completion = p.client.chat.completions.create_with_completion(
                     model=p.model,
                     response_model=response_model,
                     messages=messages,  # type: ignore[arg-type]
                     max_retries=max_retries,
                     temperature=0,
+                    **p.extra,  # type: ignore[arg-type]
                 )
-                return result, p.name
+                usage = getattr(completion, "usage", None)
+                return LLMCall(result, p.name, p.model,
+                               getattr(usage, "prompt_tokens", 0) or 0, getattr(usage, "completion_tokens", 0) or 0)
             except _FAILOVER_ERRORS as exc:
                 log.warning("provider %s unavailable (%s); failing over", p.name, type(exc).__name__)
                 last_exc = exc
@@ -90,4 +111,6 @@ def _real_key(secret: SecretStr | None) -> str | None:
 
 def _client(base_url: str, api_key: str) -> instructor.Instructor:
     # JSON mode is the most portable across Groq and Gemini's OpenAI-compat layers.
-    return instructor.from_openai(OpenAI(base_url=base_url, api_key=api_key), mode=instructor.Mode.JSON)
+    # max_retries covers 429s with the server's retry-after before we fail over to the next provider.
+    client = OpenAI(base_url=base_url, api_key=api_key, max_retries=3, timeout=60)
+    return instructor.from_openai(client, mode=instructor.Mode.JSON)

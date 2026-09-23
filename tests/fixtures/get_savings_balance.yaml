@@ -1,0 +1,205 @@
+schema_version: '0.1'
+id: corebank.member.get_savings_balance
+version: 0.1.0
+status: draft
+summary: Sign in, look up member {{member_id}} and read their current Share Savings balance
+app:
+  name: corebank
+  entry_path: /login
+inputs:
+  member_id:
+    type: string
+    description: Numeric identifier.
+    pattern: ^[0-9]+$
+    sensitive: false
+outputs:
+  savings_balance:
+    type: decimal
+    parse: currency
+    description: ''
+    sensitive: true
+secrets:
+- MOCKBANK_PASSWORD
+- MOCKBANK_USERNAME
+steps:
+- id: s01_open_app
+  intent: Open the application entry page.
+  action: navigate
+  value: /login
+  expect: []
+  timeout_ms: 10000
+- id: s02_fill_operator_id
+  intent: Enter credentials to sign in
+  action: fill
+  target:
+    frame_path: []
+    strategies:
+    - by: role
+      role: textbox
+      name: Operator ID
+    - by: title
+      title: Operator ID
+    - by: attr
+      tag: input
+      name: username
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Operator ID"
+  value: '{{secret:MOCKBANK_USERNAME}}'
+  expect: []
+  timeout_ms: 10000
+- id: s03_fill_password
+  intent: Enter password then sign on to access the system
+  action: fill
+  target:
+    frame_path: []
+    strategies:
+    - by: role
+      role: textbox
+      name: Password
+    - by: title
+      title: Password
+    - by: attr
+      tag: input
+      name: password
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Password"
+  value: '{{secret:MOCKBANK_PASSWORD}}'
+  expect: []
+  timeout_ms: 10000
+- id: s04_click_sign_on
+  intent: Click Sign On to log in and proceed to member lookup
+  action: click
+  target:
+    frame_path: []
+    strategies:
+    - by: role
+      role: button
+      name: Sign On
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(4)
+        > td:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Sign On"
+  expect:
+  - kind: url_matches
+    frame_path: []
+    pattern: /core/main\.jsp(\?|$)
+  timeout_ms: 10000
+- id: s05_click_member_search
+  intent: Navigate to Member Search to look up the member.
+  action: click
+  target:
+    frame_path:
+    - nav
+    strategies:
+    - by: role
+      role: link
+      name: Member Search
+    - by: text
+      text: Member Search
+    - by: css
+      selector: body:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(1)
+        > a:nth-of-type(1)
+    description: link "Member Search" in frame nav
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    pattern: /core/mbrsrch\.jsp(\?|$)
+  timeout_ms: 10000
+- id: s06_fill_member
+  intent: Enter the member ID and search to view member details.
+  action: fill
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: textbox
+      name: 'Member #'
+    - by: title
+      title: 'Member #'
+    - by: attr
+      tag: input
+      name: mbr_no
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: 'textbox "Member #" in frame main'
+  value: '{{member_id}}'
+  expect: []
+  timeout_ms: 10000
+- id: s07_click_search
+  intent: Click Search to retrieve member details
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: button
+      name: Search
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+        > td:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Search" in frame main
+  expect: []
+  timeout_ms: 10000
+- id: s08_click_select
+  intent: Click the member's Select link to open their account details.
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: link
+      name: Select
+    - by: text
+      text: Select
+    - by: css
+      selector: body:nth-of-type(1) > table:nth-of-type(2) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(4)
+        > a:nth-of-type(1)
+    description: link "Select" in frame main
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    pattern: /core/mbrdtl\.jsp(\?|$)
+  timeout_ms: 10000
+- id: s09_extract_savings_balance
+  intent: Extract the Share Savings balance cell
+  action: extract
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: table_cell
+      row_key: Share Savings
+      column_header: Balance
+    - by: table_cell
+      row_key: SAVINGS
+      column_header: Balance
+    - by: table_cell
+      row_key: S00
+      column_header: Balance
+    - by: css
+      selector: body:nth-of-type(1) > table:nth-of-type(3) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(4)
+    description: cell [row "Share Savings" x Balance] in frame main
+  output: savings_balance
+  expect: []
+  timeout_ms: 10000
+success:
+- kind: url_matches
+  frame_path:
+  - main
+  pattern: /core/mbrdtl\.jsp(\?|$)
+provenance:
+  discovery_run_id: discover-20260923T204712Z-1df20c
+  recorded_at: '2026-09-23T20:47:34.205374Z'
+  provider: groq
+  model: openai/gpt-oss-120b
+  goal_template: Sign in, look up member {{member_id}} and read their current Share Savings balance

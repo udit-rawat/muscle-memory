@@ -1,0 +1,24 @@
+<html><head>{% include "_head.html" %}</head><body>
+<table width="100%"><tr><td class="hdr">{{ L.nav_search }}</td></tr></table>
+<form method="post" action="/core/mbrsrch.jsp">
+<table class="grid">
+  <tr><td>{{ L.member_no }}</td><td><input type="text" name="mbr_no" title="{{ L.member_no }}" size="10" value="{{ q.mbr_no or '' }}"></td></tr>
+  <tr><td>{{ L.last_name }}</td><td><input type="text" name="lname" title="{{ L.last_name }}" size="20" value="{{ q.lname or '' }}"></td></tr>
+  <tr><td colspan="2" align="right"><input type="submit" value="{{ L.search_btn }}"></td></tr>
+</table>
+</form>
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+{% if results is not none %}
+  {% if results %}
+  <table class="grid">
+    <tr><th>{{ L.member_no }}</th><th>Name</th><th>City</th><th></th></tr>
+    {% for m in results %}
+    <tr><td>{{ m.member_no }}</td><td>{{ m.last|upper }}, {{ m.first }}</td><td>{{ m.city }}</td>
+        <td><a href="/core/mbrdtl.jsp?m={{ m.member_no }}">Select</a></td></tr>
+    {% endfor %}
+  </table>
+  {% else %}
+  <p class="err">No member matches the search criteria.</p>
+  {% endif %}
+{% endif %}
+</body></html>

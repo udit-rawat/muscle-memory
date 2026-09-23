@@ -1,0 +1,11 @@
+<html><head>{% include "_head.html" %}</head><body>
+<table class="grid" width="100%">
+  <tr><th>Functions</th></tr>
+  {% for key in t.nav_order %}
+    {% if key == "nav_home" %}<tr><td><a href="/core/welcome.jsp" target="main">{{ L.nav_home }}</a></td></tr>{% endif %}
+    {% if key == "nav_search" %}<tr><td><a href="/core/mbrsrch.jsp" target="main">{{ L.nav_search }}</a></td></tr>{% endif %}
+  {% endfor %}
+  <tr><td><font color="#999">Teller Drawer</font></td></tr>
+  <tr><td><font color="#999">GL Inquiry</font></td></tr>
+  <tr><td><font color="#999">Reports</font></td></tr>
+</table></body></html>

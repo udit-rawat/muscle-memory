@@ -1,0 +1,16 @@
+<html><head><title>{{ t.product }} - Sign On</title>{% include "_head.html" %}</head>
+<body>
+<table width="100%"><tr><td class="hdr">{{ t.brand }} &mdash; {{ t.product }}</td></tr></table>
+<br>
+{% if expired %}<p class="err">Your session has expired. Please sign on again.</p>{% endif %}
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+<form method="post" action="/login">
+<table class="grid">
+  <tr><th colspan="2">Operator Sign On</th></tr>
+  <tr><td>Operator ID</td><td><input type="text" name="username" title="Operator ID" size="16"></td></tr>
+  <tr><td>Password</td><td><input type="password" name="password" title="Password" size="16"></td></tr>
+  <tr><td colspan="2" align="right"><input type="submit" value="Sign On"></td></tr>
+</table>
+</form>
+<p style="font-size:10px;color:#666">Authorized use only. Activity is monitored.</p>
+</body></html>

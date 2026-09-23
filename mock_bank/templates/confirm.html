@@ -1,0 +1,10 @@
+<html><head>{% include "_head.html" %}</head><body>
+<table width="100%"><tr><td class="hdr">Transaction Complete</td></tr></table>
+<table class="grid">
+  <tr><td>Confirmation #</td><td>{{ conf }}</td></tr>
+  <tr><td>New Suffix</td><td>{{ suffix }}</td></tr>
+  <tr><td>Account Type</td><td>{{ type_name }}</td></tr>
+  <tr><td>Opening Deposit</td><td>${{ amount }}</td></tr>
+</table>
+<br><a href="/core/mbrdtl.jsp?m={{ member.member_no }}">Return to Member Summary</a>
+</body></html>

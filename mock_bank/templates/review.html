@@ -1,0 +1,12 @@
+<html><head>{% include "_head.html" %}</head><body>
+<table width="100%"><tr><td class="hdr">Review &mdash; {{ L.open_sub }}</td></tr></table>
+<table class="grid">
+  <tr><td>Member</td><td>{{ member.member_no }} {{ member.first }} {{ member.last }}</td></tr>
+  <tr><td>Account Type</td><td>{{ type_name }}</td></tr>
+  <tr><td>Opening Deposit</td><td>${{ p.amount }}</td></tr>
+  <tr><td>Nickname</td><td>{{ p.nickname }}</td></tr>
+</table>
+<p>Please verify the details. Posting cannot be reversed from this screen.</p>
+<form method="post" action="/core/opensub_confirm.jsp" style="display:inline"><input type="submit" value="Confirm"></form>
+<a href="/core/opensub.jsp?m={{ member.member_no }}">Back</a>
+</body></html>

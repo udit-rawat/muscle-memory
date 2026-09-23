@@ -1,0 +1,16 @@
+<html><head>{% include "_head.html" %}</head><body>
+<table width="100%"><tr><td class="hdr">{{ L.open_sub }} &mdash; {{ member.member_no }}</td></tr></table>
+{% if error %}<p class="err">{{ error }}</p>{% endif %}
+<form method="post" action="/core/opensub.jsp">
+<input type="hidden" name="m" value="{{ member.member_no }}">
+<table class="grid">
+  <tr><td>Account Type</td><td><select name="acct_type" title="Account Type">
+      <option value="">-- select --</option>
+      {% for k, v in types.items() %}<option value="{{ k }}" {% if f.acct_type == k %}selected{% endif %}>{{ v }}</option>{% endfor %}
+  </select></td></tr>
+  <tr><td>Opening Deposit</td><td><input type="text" name="deposit" title="Opening Deposit" size="12" value="{{ f.deposit or '' }}"></td></tr>
+  <tr><td>Nickname</td><td><input type="text" name="nickname" title="Nickname" size="20" value="{{ f.nickname or '' }}"></td></tr>
+  <tr><td colspan="2" align="right"><input type="submit" value="Continue"></td></tr>
+</table>
+</form>
+</body></html>

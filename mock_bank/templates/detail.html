@@ -1,0 +1,29 @@
+<html><head>{% include "_head.html" %}</head><body>
+<table width="100%"><tr><td class="hdr">Member Summary</td></tr></table>
+<table class="grid">
+  <tr><td>{{ L.member_no }}</td><td>{{ member.member_no }}</td></tr>
+  <tr><td>Name</td><td>{{ member.first }} {{ member.last }}</td></tr>
+  <tr><td>City</td><td>{{ member.city }}</td></tr>
+  <tr><td>SSN</td><td>***-**-{{ member.ssn_last4 }}</td></tr>
+</table>
+<br>
+<table class="grid">
+  <tr><th>Suffix</th><th>Type</th><th>Description</th><th>Balance</th></tr>
+  {% for a in member.accounts %}
+  <tr><td>{{ a.suffix }}</td><td>{{ a.kind|upper }}</td>
+      <td>{% if a.kind == "savings" and a.suffix == "S00" %}{{ L.savings }}{% else %}{{ a.nickname }}{% endif %}</td>
+      <td align="right">${{ "{:,.2f}".format(a.balance) }}</td></tr>
+  {% endfor %}
+</table>
+<br>
+<a href="/core/opensub.jsp?m={{ member.member_no }}">{{ L.open_sub }}</a> &nbsp;|&nbsp;
+<a href="/core/mbrsrch.jsp">New Search</a>
+{% if show_notice %}
+<div class="modal-bg"></div>
+<div class="modal">
+  <table width="100%"><tr><td class="hdr">System Notice</td></tr>
+  <tr><td><br>Scheduled maintenance tonight 11:00 PM &ndash; 1:00 AM. Posting will be unavailable.<br><br>
+  <a href="/core/mbrdtl.jsp?m={{ member.member_no }}&ack=1"><button type="button">Acknowledge</button></a></td></tr></table>
+</div>
+{% endif %}
+</body></html>

@@ -1,0 +1,26 @@
+# Safety policy: what automation may do, enforced below both the discovery agent and replay.
+# Every UI action and every network request the browser makes is checked against it.
+version: 1
+
+network:
+  # Origins the browser may contact at all. In production this is bound per tenant (the tenant's
+  # base URL); here it is the local mock bank on any port.
+  allow_origins:
+    - "http://127.0.0.1:*"
+    - "http://localhost:*"
+  # Paths that are never reachable by automation, on any allowed origin.
+  deny_paths:
+    - "^/__control/"   # the mock bank's test-harness control plane
+    - "^/logout"       # ending the operator's session is not a capability
+
+actions:
+  allowed: [navigate, click, fill, select, extract]
+
+risk:
+  irreversible:
+    # Controls whose activation commits something (matched against the accessible name).
+    control_names: "(?i)\\b(confirm|post|transfer|delete|close account|approve|disburse|submit payment)\\b"
+    # Requests that commit, whatever triggered them: blocked at the network layer unless an
+    # irreversible step is explicitly authorised at that moment (defence in depth).
+    requests:
+      - { method: POST, path: "_confirm\\.jsp$" }

@@ -15,22 +15,22 @@ from mm.surface.web import WebSurface
 from mm.values import SecretStore
 from mock_bank import app as bank
 
-FIXTURES = Path(__file__).parent / "fixtures"
+CAPS = Path(__file__).resolve().parent.parent / "capabilities"
 SECRETS = SecretStore({"MOCKBANK_USERNAME": "operator1", "MOCKBANK_PASSWORD": "change-me-local-only"})
 OPEN = {"account_type": "Holiday Club", "deposit": "25.00", "nickname": "Fund"}
 
 
-def _replay(bank_url: str, tmp_path: Path, fixture: str, **inputs: str) -> ReplayResult:
+def _replay(bank_url: str, tmp_path: Path, cap_id: str, **inputs: str) -> ReplayResult:
     recorder = RunRecorder(tmp_path, "replay", SECRETS)
     try:
-        return replay(store.load(FIXTURES / fixture), inputs, base_url=bank_url, secrets=SECRETS,
+        return replay(store.load(store.latest_path(cap_id, CAPS)), inputs, base_url=bank_url, secrets=SECRETS,
                       recorder=recorder, surface_factory=lambda rec: WebSurface(headless=True))
     finally:
         recorder.close()
 
 
 def _balance(bank_url: str, tmp_path: Path, member_id: str) -> ReplayResult:
-    return _replay(bank_url, tmp_path, "get_savings_balance.yaml", member_id=member_id)
+    return _replay(bank_url, tmp_path, "corebank.member.get_savings_balance", member_id=member_id)
 
 
 @pytest.mark.parametrize("member_id, balance", [("10234", "2450.17"), ("10871", "15320.00")])
@@ -56,6 +56,7 @@ def test_business_outcomes(bank_url: str, tmp_path: Path, member_id: str, fault:
 @pytest.mark.parametrize("fault, detector, action", [
     ("notice", "system_notice", "handled"),
     ("session_expired", "session_expired", "restarted"),
+    ("survey", "learned_click_maybe_later", "handled"),  # learned live, during discovery with the popup on
 ])
 def test_recoverable_conditions_succeed_and_are_reported(bank_url: str, tmp_path: Path, fault: str, detector: str,
                                                          action: str) -> None:
@@ -74,7 +75,6 @@ def test_slow_application_is_absorbed_by_checkpoint_waits(bank_url: str, tmp_pat
 
 @pytest.mark.parametrize("member_id, fault, kind", [
     ("10234", "error500", FailureKind.APP_ERROR),
-    ("10234", "survey", FailureKind.UNEXPECTED_STATE),  # a popup no detector knows: never carry on under it
     ("12ab", None, FailureKind.INPUT_INVALID),
 ])
 def test_failures(bank_url: str, tmp_path: Path, member_id: str, fault: str | None, kind: FailureKind) -> None:
@@ -86,7 +86,7 @@ def test_failures(bank_url: str, tmp_path: Path, member_id: str, fault: str | No
 
 
 def test_open_sub_account_commits_and_returns_confirmation(bank_url: str, tmp_path: Path) -> None:
-    result = _replay(bank_url, tmp_path, "open_sub_account.yaml", member_id="10871", **OPEN)
+    result = _replay(bank_url, tmp_path, "corebank.member.open_sub_account", member_id="10871", **OPEN)
     assert isinstance(result, ReplaySuccess), result
     assert result.outputs["confirmation_number"].startswith("CNF") and result.outputs["new_suffix"].startswith("S")
     assert len(bank.data.MEMBERS["10871"].accounts) == 3
@@ -98,14 +98,15 @@ def test_open_sub_account_commits_and_returns_confirmation(bank_url: str, tmp_pa
 ])
 def test_open_sub_account_validation_is_a_business_outcome(bank_url: str, tmp_path: Path, deposit: str,
                                                             message: str) -> None:
-    result = _replay(bank_url, tmp_path, "open_sub_account.yaml", member_id="10871", **{**OPEN, "deposit": deposit})
+    inputs = {**OPEN, "deposit": deposit}
+    result = _replay(bank_url, tmp_path, "corebank.member.open_sub_account", member_id="10871", **inputs)
     assert isinstance(result, ReplayBusinessOutcome), result
     assert result.code == "VALIDATION_REJECTED" and message in result.message
     assert len(bank.data.MEMBERS["10871"].accounts) == 2  # nothing was committed
 
 
 def test_open_sub_account_rejects_values_outside_the_dropdown(bank_url: str, tmp_path: Path) -> None:
-    result = _replay(bank_url, tmp_path, "open_sub_account.yaml", member_id="10871",
+    result = _replay(bank_url, tmp_path, "corebank.member.open_sub_account", member_id="10871",
                      **{**OPEN, "account_type": "Checking"})
     assert isinstance(result, ReplayFailure) and result.kind is FailureKind.INPUT_INVALID
 
@@ -114,3 +115,12 @@ def test_secrets_and_outputs_never_reach_the_event_log(bank_url: str, tmp_path: 
     _balance(bank_url, tmp_path, "10234")
     log = next(tmp_path.glob("*/events.jsonl")).read_text()
     assert "change-me-local-only" not in log and "2,450.17" not in log and "2450.17" not in log
+
+
+def test_popup_unknown_to_a_capability_blocks_it(bank_url: str, tmp_path: Path) -> None:
+    # open_sub_account was recorded without the survey, so for it the popup is unknown: never carry on under it.
+    bank.FAULTS.add("survey")
+    result = _replay(bank_url, tmp_path, "corebank.member.open_sub_account", member_id="10871", **OPEN)
+    assert isinstance(result, ReplayFailure) and result.kind is FailureKind.UNEXPECTED_STATE
+    assert "Quick Survey" in (result.observed or "")
+    assert len(bank.data.MEMBERS["10871"].accounts) == 2

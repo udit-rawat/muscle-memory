@@ -6,7 +6,8 @@ from pydantic import ValidationError
 from mm.artifact import store
 from mm.artifact.schema import Capability
 
-FIXTURE = Path(__file__).parent / "fixtures" / "get_savings_balance.yaml"
+FIXTURE = store.latest_path("corebank.member.get_savings_balance",
+                            Path(__file__).resolve().parent.parent / "capabilities")
 
 
 def test_recorded_artifact_round_trips(tmp_path: Path) -> None:
@@ -72,4 +73,4 @@ def test_detector_rules() -> None:
 def test_business_outcomes_are_declared_in_the_contract() -> None:
     cap = store.load(FIXTURE)
     assert "MEMBER_NOT_FOUND" in cap.outcomes and "PERMISSION_DENIED" in cap.outcomes
-    assert all(d.source.startswith("pack:corebank@") for d in cap.detectors)
+    assert all(d.source.startswith(("pack:corebank@", "discovery:")) for d in cap.detectors)

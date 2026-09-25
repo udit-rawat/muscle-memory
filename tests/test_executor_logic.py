@@ -140,7 +140,7 @@ def test_restart_is_refused_after_an_irreversible_step(tmp_path: Path) -> None:
     # Restarting would press Confirm a second time: never silently repeat a side effect.
     cap, state, effects = _expiring_flow(confirm_risk="irreversible")
     result = _run(cap, state, effects, tmp_path)
-    assert isinstance(result, ReplayFailure) and result.kind is FailureKind.RESTART_UNSAFE
+    assert isinstance(result, ReplayFailure) and result.kind is FailureKind.UNSAFE_TO_REPEAT
     assert state.performed.count("Confirm") == 1
 
 

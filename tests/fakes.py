@@ -30,7 +30,7 @@ class FakeSurface:
     def perform(self, action: ActionType, target: Target | None, value: str | None, timeout_ms: int) -> ActResult:
         key = target.description if target else (value or "")
         if target is not None and key not in self.state.present:
-            return ActResult(ok=False, detail="target not found", attempts=[f"{key}: 0 matches"])
+            return ActResult(ok=False, error="not_found", detail="target not found", attempts=[f"{key}: 0 matches"])
         self.state.performed.append(key)
         effect = self.effects.get(key)
         result = effect(self.state) if effect else None
@@ -61,7 +61,11 @@ class FakeSurface:
         return Observation(url=self.state.url, title="", elements=[])
 
     def act(self, action: ActionType, ref: str | None, value: str | None = None) -> ActResult:
-        raise NotImplementedError
+        self.state.performed.append(f"{action}:{ref}")
+        return ActResult(ok=True, frame_urls={"": self.state.url})
+
+    def frame_urls(self) -> dict[str, str]:
+        return {"": self.state.url}
 
     def screenshot(self, path: str) -> None:
         with open(path, "wb") as fh:

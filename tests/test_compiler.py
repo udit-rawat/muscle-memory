@@ -40,7 +40,7 @@ def _run() -> DiscoveryResult:
 
 
 def test_dismissed_popup_becomes_a_recoverable_detector_not_a_step(tmp_path: Path) -> None:
-    cap = compile_run(_run(), "app.member.open_account", packs_dir=tmp_path)
+    cap = compile_run(_run(), "app.member.open_account", pack="none")
     assert all("acknowledge" not in s.id for s in cap.steps)
     learned = [d for d in cap.detectors if d.id.startswith("learned_")]
     assert len(learned) == 1 and learned[0].class_ == "recoverable"
@@ -48,21 +48,22 @@ def test_dismissed_popup_becomes_a_recoverable_detector_not_a_step(tmp_path: Pat
 
 
 def test_input_types_are_inferred_from_values_and_dropdown_options(tmp_path: Path) -> None:
-    cap = compile_run(_run(), "app.member.open_account", packs_dir=tmp_path)
+    cap = compile_run(_run(), "app.member.open_account", pack="none")
     assert cap.inputs["member_id"].pattern == r"^[0-9]+$"
     assert cap.inputs["account_type"].enum == ["Share Savings", "Holiday Club"]
     assert cap.inputs["deposit"].type == "decimal"
 
 
 def test_checkpoints_and_risk(tmp_path: Path) -> None:
-    cap = compile_run(_run(), "app.member.open_account", packs_dir=tmp_path)
+    cap = compile_run(_run(), "app.member.open_account", pack="none")
     by_name = {s.id.split("_", 1)[1]: s for s in cap.steps}
     # no navigation: wait for the next step's control to be there
     assert [c.kind for c in by_name["fill_member"].expect] == ["target_present"]
     # navigation: the frame must land on the recorded page, whatever the query string
     confirm = by_name["click_confirm"]
     assert confirm.risk == "irreversible"
-    assert confirm.expect[0].kind == "url_matches" and confirm.expect[0].pattern == r"/core/done\.jsp(\?|$)"
+    assert confirm.expect[0].kind == "url_matches"
+    assert confirm.expect[0].pattern == r"^[a-z]+://[^/]+/core/done\.jsp(\?|#|$)"
     assert by_name["select_account_type"].risk == "safe"
 
 
@@ -77,7 +78,7 @@ def test_pack_detectors_are_copied_in_with_their_source(tmp_path: Path) -> None:
 
 
 def test_no_concrete_input_value_is_stored(tmp_path: Path) -> None:
-    cap = compile_run(_run(), "app.member.open_account", packs_dir=tmp_path)
+    cap = compile_run(_run(), "app.member.open_account", pack="none")
     dumped = cap.model_dump_json()
     assert "10234" not in dumped and "25.00" not in dumped
     assert "{{member_id}}" in cap.summary

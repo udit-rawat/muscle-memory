@@ -1,8 +1,10 @@
 schema_version: '0.2'
-id: corebank.member.get_savings_balance
+id: corebank.member.open_sub_account
 version: 0.1.0
 status: draft
-summary: Sign in, look up member {{member_id}} and read their current Share Savings balance
+summary: Sign in, open the record of member {{member_id}}, open a new sub-account of type {{account_type}} with
+  an opening deposit of {{deposit}} and the nickname {{nickname}}, confirm it, and read the confirmation number
+  and the new account suffix from the confirmation screen
 app:
   name: corebank
   entry_path: /login
@@ -12,10 +14,32 @@ inputs:
     description: Numeric identifier.
     pattern: ^[0-9]+$
     sensitive: false
-outputs:
-  savings_balance:
+  account_type:
+    type: string
+    description: One of the dropdown's options.
+    enum:
+    - Share Savings
+    - Share Certificate
+    - Holiday Club
+    sensitive: false
+  deposit:
     type: decimal
-    parse: currency
+    description: Amount with up to two decimals.
+    pattern: ^[0-9]+(\.[0-9]{1,2})?$
+    sensitive: false
+  nickname:
+    type: string
+    description: ''
+    sensitive: false
+outputs:
+  confirmation_number:
+    type: string
+    parse: text
+    description: ''
+    sensitive: true
+  new_suffix:
+    type: string
+    parse: text
     description: ''
     sensitive: true
 outcomes:
@@ -35,7 +59,7 @@ steps:
   risk: safe
   timeout_ms: 10000
 - id: s02_fill_operator_id
-  intent: Fill credentials and sign on to access member lookup
+  intent: Fill credentials and sign on to access member records
   action: fill
   target:
     frame_path: []
@@ -75,7 +99,7 @@ steps:
   risk: safe
   timeout_ms: 10000
 - id: s03_fill_password
-  intent: Enter password then sign on to access the system
+  intent: Enter password and sign on to access the system
   action: fill
   target:
     frame_path: []
@@ -110,7 +134,7 @@ steps:
   risk: safe
   timeout_ms: 10000
 - id: s04_click_sign_on
-  intent: Click Sign On to log in and proceed to member lookup
+  intent: Click Sign On to log in and proceed to member search
   action: click
   target:
     frame_path: []
@@ -130,7 +154,7 @@ steps:
   risk: safe
   timeout_ms: 10000
 - id: s05_click_member_search
-  intent: Navigate to Member Search to look up the member.
+  intent: Navigate to Member Search to find the member record
   action: click
   target:
     frame_path:
@@ -154,7 +178,7 @@ steps:
   risk: safe
   timeout_ms: 10000
 - id: s06_fill_member
-  intent: Enter the member ID and search to view member details.
+  intent: Enter the member ID to locate the member record.
   action: fill
   target:
     frame_path:
@@ -192,7 +216,7 @@ steps:
   risk: safe
   timeout_ms: 10000
 - id: s07_click_search
-  intent: Click Search to retrieve member details
+  intent: Click Search to retrieve member record
   action: click
   target:
     frame_path:
@@ -226,7 +250,7 @@ steps:
   risk: safe
   timeout_ms: 10000
 - id: s08_click_select
-  intent: Click the Select link to open the member's account details page.
+  intent: Select the member to open their record.
   action: click
   target:
     frame_path:
@@ -249,26 +273,250 @@ steps:
     pattern: /core/mbrdtl\.jsp(\?|$)
   risk: safe
   timeout_ms: 10000
-- id: s09_extract_savings_balance
-  intent: Extract the Share Savings balance value.
+- id: s09_click_open_sub_account
+  intent: Open the sub-account creation form for the member.
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: link
+      name: Open Sub-Account
+    - by: text
+      text: Open Sub-Account
+    - by: css
+      selector: body:nth-of-type(1) > a:nth-of-type(1)
+    description: link "Open Sub-Account" in frame main
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: /core/opensub\.jsp(\?|$)
+  risk: safe
+  timeout_ms: 10000
+- id: s10_select_account_type
+  intent: Select the requested sub-account type before proceeding
+  action: select
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: combobox
+      name: Account Type
+    - by: title
+      title: Account Type
+    - by: attr
+      tag: select
+      name: acct_type
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1)
+        > td:nth-of-type(2) > select:nth-of-type(1)
+    description: combobox "Account Type" in frame main
+  value: '{{account_type}}'
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: textbox
+        name: Opening Deposit
+      - by: title
+        title: Opening Deposit
+      - by: attr
+        tag: input
+        name: deposit
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2)
+          > td:nth-of-type(2) > input:nth-of-type(1)
+      description: textbox "Opening Deposit" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s11_fill_opening_deposit
+  intent: Fill the opening deposit field with the required amount.
+  action: fill
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: textbox
+      name: Opening Deposit
+    - by: title
+      title: Opening Deposit
+    - by: attr
+      tag: input
+      name: deposit
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Opening Deposit" in frame main
+  value: '{{deposit}}'
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: textbox
+        name: Nickname
+      - by: title
+        title: Nickname
+      - by: attr
+        tag: input
+        name: nickname
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+          > td:nth-of-type(2) > input:nth-of-type(1)
+      description: textbox "Nickname" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s12_fill_nickname
+  intent: Enter the required nickname and proceed to create the sub-account.
+  action: fill
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: textbox
+      name: Nickname
+    - by: title
+      title: Nickname
+    - by: attr
+      tag: input
+      name: nickname
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Nickname" in frame main
+  value: '{{nickname}}'
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Continue
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(4)
+          > td:nth-of-type(1) > input:nth-of-type(1)
+      description: button "Continue" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s13_click_continue
+  intent: Click Continue to submit the new sub-account request
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: button
+      name: Continue
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(4)
+        > td:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Continue" in frame main
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Confirm
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > input:nth-of-type(1)
+      description: button "Confirm" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s14_click_confirm
+  intent: Click Confirm to submit the new sub-account and reach the confirmation screen.
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: button
+      name: Confirm
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Confirm" in frame main
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: /core/opensub_confirm\.jsp(\?|$)
+  risk: irreversible
+  timeout_ms: 10000
+- id: s15_extract_confirmation_number
+  intent: Extract the confirmation number and new suffix from the confirmation screen.
   action: extract
   target:
     frame_path:
     - main
     strategies:
     - by: table_cell
-      row_key: Share Savings
-      column_header: Balance
-    - by: table_cell
-      row_key: SAVINGS
-      column_header: Balance
-    - by: table_cell
-      row_key: S00
-      column_header: Balance
+      row_key: 'Confirmation #'
+      column_index: 2
     - by: css
-      selector: body:nth-of-type(1) > table:nth-of-type(3) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(4)
-    description: cell [row "Share Savings" x Balance] in frame main
-  output: savings_balance
+      selector: body:nth-of-type(1) > table:nth-of-type(2) > tbody:nth-of-type(1) > tr:nth-of-type(1) > td:nth-of-type(2)
+    description: 'cell [row "Confirmation #" x column 2] in frame main'
+  output: confirmation_number
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: table_cell
+        row_key: New Suffix
+        column_index: 2
+      - by: css
+        selector: body:nth-of-type(1) > table:nth-of-type(2) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(2)
+      description: cell [row "New Suffix" x column 2] in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s16_extract_new_suffix
+  intent: Extract the new account suffix from the confirmation screen.
+  action: extract
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: table_cell
+      row_key: New Suffix
+      column_index: 2
+    - by: css
+      selector: body:nth-of-type(1) > table:nth-of-type(2) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(2)
+    description: cell [row "New Suffix" x column 2] in frame main
+  output: new_suffix
   expect: []
   risk: safe
   timeout_ms: 10000
@@ -407,10 +655,12 @@ success:
   frame_path:
   - main
   any_frame: false
-  pattern: /core/mbrdtl\.jsp(\?|$)
+  pattern: /core/opensub_confirm\.jsp(\?|$)
 provenance:
-  discovery_run_id: discover-20260925T194306Z-3c3bad
-  recorded_at: '2026-09-25T19:43:46.324790Z'
+  discovery_run_id: discover-20260925T195219Z-c5674c
+  recorded_at: '2026-09-25T19:53:26.387386Z'
   provider: groq
   model: openai/gpt-oss-120b
-  goal_template: Sign in, look up member {{member_id}} and read their current Share Savings balance
+  goal_template: Sign in, open the record of member {{member_id}}, open a new sub-account of type {{account_type}}
+    with an opening deposit of {{deposit}} and the nickname {{nickname}}, confirm it, and read the confirmation
+    number and the new account suffix from the confirmation screen

@@ -49,3 +49,27 @@ def test_id_and_version_format() -> None:
         Capability.model_validate(_broken(id="Not A Dotted Id"))
     with pytest.raises(ValidationError):
         Capability.model_validate(_broken(version="1.0"))
+
+
+def _detector(**overrides: object) -> dict[str, object]:
+    base: dict[str, object] = {"id": "d", "class": "business_outcome", "code": "NOPE",
+                               "when": [{"kind": "text_visible", "pattern": "x"}]}
+    return {**base, **overrides}
+
+
+def test_detector_rules() -> None:
+    with pytest.raises(ValidationError, match="UPPER_SNAKE code"):
+        Capability.model_validate(_broken(detectors=[_detector(code=None)], outcomes=[]))
+    with pytest.raises(ValidationError, match="only recoverable"):
+        Capability.model_validate(_broken(detectors=[_detector(handle=[{"action": "click", "target": None}])],
+                                          outcomes=["NOPE"]))
+    with pytest.raises(ValidationError, match="must list exactly"):
+        Capability.model_validate(_broken(detectors=[_detector()], outcomes=[]))
+    with pytest.raises(ValidationError, match="unknown steps"):
+        Capability.model_validate(_broken(detectors=[_detector(after_steps=["s99"])], outcomes=["NOPE"]))
+
+
+def test_business_outcomes_are_declared_in_the_contract() -> None:
+    cap = store.load(FIXTURE)
+    assert "MEMBER_NOT_FOUND" in cap.outcomes and "PERMISSION_DENIED" in cap.outcomes
+    assert all(d.source.startswith("pack:corebank@") for d in cap.detectors)

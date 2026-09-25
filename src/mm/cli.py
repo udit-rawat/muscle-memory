@@ -19,7 +19,7 @@ console = Console()
 def mockbank(
     port: int = typer.Option(8600, help="Port to serve on."),
     tenant: str = typer.Option("tenant_a", help="tenant_a | tenant_b"),
-    faults: str = typer.Option("", help="Comma-separated: slow,notice,session_expired,permission,error500"),
+    faults: str = typer.Option("", help="Comma-separated: slow,notice,survey,session_expired,permission,error500"),
 ) -> None:
     """Serve the mock legacy core-banking app."""
     import os
@@ -84,6 +84,7 @@ def discover(
     param: list[str] = typer.Option([], "--param", "-p", help="Task input as name=value; becomes a typed input."),
     output: list[str] = typer.Option([], "--output", "-o", help="Output name the run must extract."),
     max_steps: int = typer.Option(0, help="Step budget (default from settings)."),
+    pack: str = typer.Option(None, help="Detector pack to include (default: the capability id's app prefix)."),
     headless: bool = typer.Option(None, "--headless/--headed", help="Override MM_HEADLESS."),
 ) -> None:
     """Run the LLM agent on a goal; on success, compile and save a capability artifact."""
@@ -112,7 +113,7 @@ def discover(
     colour = "green" if result.status == "success" else "red"
     console.print(f"[{colour}]{result.status}[/] after {len(result.steps)} recorded steps: {result.summary}")
     if result.status == "success":
-        cap = compile_run(result, name)
+        cap = compile_run(result, name, pack=pack)
         path = store.save(cap)
         (recorder.dir / "artifact.yaml").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         recorder.event("artifact_saved", path=str(path), capability=cap.id, version=cap.version)
@@ -128,7 +129,10 @@ def replay(
     base_url: str = typer.Option("", help="Tenant base URL to bind (default: MOCKBANK_URL)."),
     headless: bool = typer.Option(None, "--headless/--headed", help="Override MM_HEADLESS."),
 ) -> None:
-    """Replay a capability deterministically (no LLM). Prints the structured result as JSON."""
+    """Replay a capability deterministically (no LLM). Prints the structured result as JSON.
+
+    Exit codes: 0 success, 3 business outcome (a legitimate answer, e.g. MEMBER_NOT_FOUND), 2 failure.
+    """
     from mm.artifact import store
     from mm.evidence.recorder import RunRecorder
     from mm.replay.executor import replay as run_replay
@@ -146,7 +150,7 @@ def replay(
     )
     recorder.close()
     print(json.dumps(result.model_dump(mode="json"), indent=2))
-    raise typer.Exit(0 if result.status == "success" else 2)
+    raise typer.Exit({"success": 0, "business_outcome": 3}.get(result.status, 2))
 
 
 if __name__ == "__main__":

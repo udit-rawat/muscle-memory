@@ -27,7 +27,7 @@ Rules:
 - For task inputs, type the placeholder, e.g. {{member_id}}, not the raw value.
 - For credentials, type {{secret:NAME}} using the listed secret names. Never guess credentials.
 - Extract a single cell holding the value itself (e.g. the balance cell), not a whole row or label.
-- If a dialog or notice blocks the page, deal with it first.
+- If an unexpected dialog or notice blocks the page, dismiss it first and set "interruption": true on that click.
 - If your last action did not change the screen, do something different.
 - Keep 'thought' to one short sentence.
 Respond with JSON only."""
@@ -37,7 +37,7 @@ def user_message(
     goal: str,
     inputs: Mapping[str, str],
     secret_names: list[str],
-    outputs: Mapping[str, str],
+    extracted: list[str],
     history: list[str],
     obs: Observation,
 ) -> str:
@@ -46,8 +46,9 @@ def user_message(
         lines.append("INPUTS (type as placeholders): " + ", ".join(f"{{{{{k}}}}}={v}" for k, v in inputs.items()))
     if secret_names:
         lines.append("SECRETS available: " + ", ".join(f"{{{{secret:{n}}}}}" for n in secret_names))
-    if outputs:
-        lines.append("EXTRACTED so far: " + ", ".join(f"{k}={v}" for k, v in outputs.items()))
+    if extracted:
+        # Names only: the values stay out of the prompt, and showing masked values made the model re-read them.
+        lines.append("ALREADY EXTRACTED (do not extract again): " + ", ".join(extracted))
     lines += ["", "HISTORY:" if history else "HISTORY: (none, this is the first step)"]
     lines += history[-8:]
     lines += ["", f"SCREEN: {obs.title} | {obs.url}"]
@@ -58,5 +59,6 @@ def user_message(
     for e in obs.elements:
         where = f" @{'/'.join(e.frame_path)}" if e.frame_path else ""
         val = f" value={e.value!r}" if e.value else ""
-        lines.append(f"[{e.ref}] {e.role} \"{e.name}\"{val}{where}")
+        opts = f" options=[{' | '.join(e.options)}]" if e.options else ""
+        lines.append(f"[{e.ref}] {e.role} \"{e.name}\"{val}{opts}{where}")
     return "\n".join(lines)

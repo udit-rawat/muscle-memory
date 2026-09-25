@@ -27,6 +27,9 @@ class Decision(BaseModel):
                           "navigate: url.")
     output_name: str | None = Field(None, description="extract: snake_case name for the value read.")
     summary: str | None = Field(None, description="done/fail/request_human: what happened and why.")
+    interruption: bool = Field(
+        False, description="true only if this action just dismisses an unexpected popup or notice that is not a "
+                           "normal part of the task.")
 
     @model_validator(mode="after")
     def _check(self) -> Decision:
@@ -34,6 +37,7 @@ class Decision(BaseModel):
         refs: set[str] = ctx.get("refs", set())
         inputs: set[str] = ctx.get("inputs", set())
         secrets: set[str] = ctx.get("secrets", set())
+        extracted: set[str] = ctx.get("extracted", set())
 
         if self.action in ("click", "fill", "select", "extract"):
             if not self.ref:
@@ -44,8 +48,12 @@ class Decision(BaseModel):
             raise ValueError(f"{self.action} requires 'value'")
         if self.action == "extract" and not (self.output_name and _SNAKE.match(self.output_name)):
             raise ValueError("extract requires a snake_case 'output_name'")
+        if self.action == "extract" and self.output_name in extracted:
+            raise ValueError(f"{self.output_name!r} is already extracted; extract something else or finish with done")
         if self.action in ("done", "fail", "request_human") and not self.summary:
             raise ValueError(f"{self.action} requires 'summary'")
+        if self.interruption and self.action != "click":
+            raise ValueError("only a click can be marked as dismissing an interruption")
         for m in re.finditer(r"\{\{\s*(secret:)?([A-Za-z_][A-Za-z0-9_]*)\s*\}\}", self.value or ""):
             known = secrets if m.group(1) else inputs
             if m.group(2) not in known:
@@ -54,11 +62,13 @@ class Decision(BaseModel):
         return self
 
 
-def for_screen(refs: set[str], inputs: set[str], secrets: set[str]) -> type[Decision]:
-    """A Decision type whose validator knows what is on the current screen."""
+def for_screen(refs: set[str], inputs: set[str], secrets: set[str], extracted: set[str] | None = None
+               ) -> type[Decision]:
+    """A Decision type whose validator knows what is on the current screen and what is already done."""
 
     class ScreenDecision(Decision):
-        screen: ClassVar[dict[str, Any]] = {"refs": refs, "inputs": inputs, "secrets": secrets}
+        screen: ClassVar[dict[str, Any]] = {"refs": refs, "inputs": inputs, "secrets": secrets,
+                                            "extracted": extracted or set()}
 
     ScreenDecision.__name__ = ScreenDecision.__qualname__ = "Decision"
     return ScreenDecision

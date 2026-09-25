@@ -18,7 +18,7 @@ from mm.evidence.recorder import RunRecorder
 from mm.llm.router import LLMRouter
 from mm.redact import mask_value
 from mm.surface.base import ActionType, Surface, Target
-from mm.values import SecretStore, TemplateError, parameterize, render
+from mm.values import SecretStore, TemplateError, parameterize, referenced, render
 
 Status = Literal["success", "failed", "stuck", "needs_human", "max_steps", "timeout"]
 
@@ -32,6 +32,8 @@ class RecordedStep:
     output: str | None
     frame_urls_before: dict[str, str]
     frame_urls_after: dict[str, str]
+    interruption: bool = False  # dismissed an unexpected popup: becomes a detector, not a step
+    options: list[str] | None = None  # select: the dropdown's options when recorded
 
 
 @dataclass
@@ -68,6 +70,7 @@ def discover(
     history: list[str] = []
     recent: list[tuple[str, str, str]] = []
     consecutive_failures = 0
+    entered: set[str] = set()  # inputs the agent has actually typed/selected
     started = time.monotonic()
 
     for n in range(1, max_steps + 1):
@@ -75,13 +78,21 @@ def discover(
             result.status, result.summary = "timeout", f"no result after {timeout_s:.0f}s"
             break
         obs = surface.observe()
-        prompt = user_message(goal, inputs, secrets.names, _masked(result.outputs), history, obs)
+        prompt = user_message(goal, inputs, secrets.names, list(result.outputs), history, obs)
+        notes = []
         if required_outputs:
-            prompt = prompt.replace("\n\nHISTORY", f"\nOUTPUTS required: {', '.join(required_outputs)}\n\nHISTORY", 1)
+            notes.append(f"OUTPUTS required: {', '.join(required_outputs)}")
+        if unused := [k for k in inputs if k not in entered]:
+            notes.append("INPUTS not yet entered: " + ", ".join("{{" + k + "}}" for k in unused))
+        if required_outputs and not [o for o in required_outputs if o not in result.outputs] and not unused:
+            notes.append("STATUS: every required output is extracted and every input entered. "
+                         "If the screen confirms the goal is achieved, respond with done.")
+        if notes:
+            prompt = prompt.replace("\n\nHISTORY", "\n" + "\n".join(notes) + "\n\nHISTORY", 1)
         recorder.write_text(f"prompts/{n:02d}.txt", prompt)
 
         call = router.structured(
-            for_screen({e.ref for e in obs.elements}, set(inputs), set(secrets.names)),
+            for_screen({e.ref for e in obs.elements}, set(inputs), set(secrets.names), set(result.outputs)),
             [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
         )
         d = call.value
@@ -95,8 +106,9 @@ def discover(
 
         if d.action == "done":
             missing = [o for o in required_outputs if o not in result.outputs]
-            if missing:
-                history.append(f"{n}. done REJECTED: still missing outputs {missing}")
+            unused = [k for k in inputs if k not in entered]
+            if missing or unused:
+                history.append(f"{n}. done REJECTED: missing outputs {missing}, inputs never entered {unused}")
                 continue
             result.status, result.summary = "success", d.summary or ""
             break
@@ -124,15 +136,18 @@ def discover(
             consecutive_failures = 0
             if action is ActionType.EXTRACT and d.output_name:
                 result.outputs[d.output_name] = res.extracted or ""
+            if template:
+                entered |= referenced(template)[0]
             result.steps.append(RecordedStep(action, d.thought, res.target, template, d.output_name,
-                                             before, res.frame_urls))
-            history.append(f"{n}. {d.action} {described}{shown_value} -> ok")
+                                             before, res.frame_urls, d.interruption, res.options))
+            stored = f" (stored as {d.output_name})" if action is ActionType.EXTRACT else ""
+            history.append(f"{n}. {d.action} {described}{shown_value} -> ok{stored}")
         else:
             consecutive_failures += 1
             history.append(f"{n}. {d.action} {described}{shown_value} -> FAILED: {res.detail}")
 
         recent = (recent + [(d.action, described, template or "")])[-3:]
-        repeating = len(recent) == 3 and len(set(recent)) == 1 and action is not ActionType.EXTRACT
+        repeating = len(recent) == 3 and len(set(recent)) == 1
         if consecutive_failures >= 3 or repeating:
             result.status, result.summary = "stuck", f"no progress after step {n}: {history[-1]}"
             break

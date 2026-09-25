@@ -1,28 +1,60 @@
 """Deterministic replay: execute a Capability with caller-supplied inputs. No model in the loop.
 
-Same artifact + same inputs + same app state -> same steps, same outputs. Every step's target
-must resolve to exactly one element, every declared checkpoint must hold, and every declared
-output must be extracted and parsed, otherwise the run stops with a structured failure.
+Same artifact + same inputs + same app state -> same steps, same outputs. For each step:
+
+  1. perform the action on the step's target (every strategy must match exactly one element);
+  2. wait until the step's checkpoints hold, checking the capability's detectors on every poll,
+     so an exceptional state is recognised as what it is the moment it appears:
+       business_outcome -> stop, return the code to the caller (a legitimate answer, not an error)
+       recoverable      -> run the detector's bounded, deterministic handler, then continue / redo / restart
+       hard_failure     -> stop with a debuggable failure
+  3. before moving on, make sure nothing unrecognised (e.g. an unknown modal) is blocking the UI.
+
+If a step fails outright (target missing, click intercepted), detectors get the first say too:
+"no Select link" after a search is MEMBER_NOT_FOUND, not TARGET_NOT_FOUND.
 """
 
 from __future__ import annotations
 
 import re
 import time
+from collections import Counter
 from collections.abc import Callable, Mapping
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urljoin
 
-from mm.artifact.schema import Capability, OutputSpec
+from mm.artifact.schema import Capability, Detector, OutputSpec, Step
 from mm.evidence.recorder import RunRecorder
 from mm.redact import mask_value
-from mm.replay.result import FailureKind, ReplayFailure, ReplayResult, ReplaySuccess, StepTrace
+from mm.replay.result import (
+    FailureKind,
+    Recovery,
+    ReplayBusinessOutcome,
+    ReplayFailure,
+    ReplayResult,
+    ReplaySuccess,
+    StepTrace,
+)
 from mm.surface.base import ActionType, Surface
 from mm.values import SecretStore, render
 
+_POLL_S = 0.15
+_MAX_STEP_ATTEMPTS = 3
+_RECOVERY_ACTION: dict[str, Literal["handled", "retried_step", "restarted"]] = {
+    "continue": "handled", "retry_step": "retried_step", "restart": "restarted"}
+
 
 class OutputParseError(ValueError):
+    pass
+
+
+class _Stop(Exception):  # noqa: N818 — control flow, carries the final result
+    def __init__(self, result: ReplayResult) -> None:
+        self.result = result
+
+
+class _Restart(Exception):  # noqa: N818
     pass
 
 
@@ -34,8 +66,17 @@ def validate_inputs(cap: Capability, params: Mapping[str, str]) -> list[str]:
         problems.append(f"unknown inputs: {unknown}")
     for name, spec in cap.inputs.items():
         value = params.get(name)
-        if value is not None and spec.pattern and not re.fullmatch(spec.pattern, value):
+        if value is None:
+            continue
+        if spec.pattern and not re.fullmatch(spec.pattern, value):
             problems.append(f"input {name!r} does not match {spec.pattern}")
+        if spec.enum and value not in spec.enum:
+            problems.append(f"input {name!r} must be one of {spec.enum}")
+        if spec.type == "decimal":
+            try:
+                Decimal(value)
+            except InvalidOperation:
+                problems.append(f"input {name!r} is not a decimal")
     return problems
 
 
@@ -53,15 +94,15 @@ def replay(
                    inputs={k: (mask_value(v) if cap.inputs[k].sensitive else v)
                            for k, v in params.items() if k in cap.inputs})
 
+    result: ReplayResult
     if problems := validate_inputs(cap, params):
-        result: ReplayResult = ReplayFailure(**base, kind=FailureKind.INPUT_INVALID, step_id=None,
-                                             message="; ".join(problems))
+        result = ReplayFailure(**base, kind=FailureKind.INPUT_INVALID, step_id=None, message="; ".join(problems))
         recorder.event("replay_end", **_loggable(result))
         return result
 
     surface = surface_factory(recorder)
     try:
-        result = _run(cap, params, base_url, surface, secrets, recorder, base)
+        result = _Replay(cap, params, base_url, surface, secrets, recorder, base).run()
     finally:
         surface.close()
     if isinstance(result, ReplayFailure):
@@ -70,66 +111,201 @@ def replay(
     return result
 
 
-def _run(
-    cap: Capability, params: Mapping[str, str], base_url: str, surface: Surface, secrets: SecretStore,
-    recorder: RunRecorder, base: dict[str, Any],
-) -> ReplayResult:
-    outputs: dict[str, str] = {}
-    traces: list[StepTrace] = []
-    drift: list[str] = []
+class _Replay:
+    def __init__(self, cap: Capability, params: Mapping[str, str], base_url: str, surface: Surface,
+                 secrets: SecretStore, recorder: RunRecorder, base: dict[str, Any]) -> None:
+        self.cap, self.params, self.base_url = cap, params, base_url
+        self.surface, self.secrets, self.rec, self.base = surface, secrets, recorder, base
+        self.outputs: dict[str, str] = {}
+        self.traces: list[StepTrace] = []
+        self.drift: list[str] = []
+        self.recoveries: list[Recovery] = []
+        self.fired: Counter[str] = Counter()
+        self.committed = False  # a non-safe step has run: restarting could repeat a side effect
 
-    def fail(kind: FailureKind, step_id: str | None, message: str,
-             expected: str | None = None, observed: str | None = None) -> ReplayFailure:
-        shot = recorder.screenshot_path(f"failure-{step_id or 'run'}")
-        surface.screenshot(str(shot))
-        return ReplayFailure(**base, steps=traces, kind=kind, step_id=step_id, message=message,
-                             expected=expected, observed=observed, screenshot=str(shot))
+    # --- top level -----------------------------------------------------------------------------
 
-    for step in cap.steps:
-        t0 = time.monotonic()
-        value = render(step.value, params, secrets) if step.value else None
-        if step.action is ActionType.NAVIGATE and value:
-            value = urljoin(base_url.rstrip("/") + "/", value.lstrip("/"))
-        res = surface.perform(step.action, step.target, value, step.timeout_ms)
-        by = step.target.strategies[res.strategy_index].by if step.target and res.strategy_index is not None else None
-        traces.append(StepTrace(step_id=step.id, ok=res.ok, strategy=by, strategy_index=res.strategy_index,
-                                duration_ms=int((time.monotonic() - t0) * 1000)))
-        recorder.event("step", step_id=step.id, action=step.action, ok=res.ok, strategy=by,
-                       strategy_index=res.strategy_index, detail=res.detail, attempts=res.attempts,
-                       extracted=mask_value(res.extracted) if res.extracted else None)
+    def run(self) -> ReplayResult:
+        try:
+            i = 0
+            while i < len(self.cap.steps):
+                try:
+                    self._step(self.cap.steps[i])
+                    i += 1
+                except _Restart:
+                    self.rec.event("restart", from_step=self.cap.steps[i].id)
+                    self.outputs.clear()
+                    i = 0
+            return self._finish()
+        except _Stop as stop:
+            return stop.result
 
-        if not res.ok:
-            desc = step.target.description if step.target else step.value
-            if res.detail == "target not found":
-                return fail(FailureKind.TARGET_NOT_FOUND, step.id, f"could not find {desc}",
-                            expected=_strategies(step), observed="; ".join(res.attempts))
-            return fail(FailureKind.ACTION_FAILED, step.id, f"{step.action} on {desc} failed",
-                        expected=step.intent, observed=res.detail)
-        if res.strategy_index:
-            drift.append(f"{step.id}: matched by fallback strategy #{res.strategy_index} ({by})")
-
-        if step.action is ActionType.EXTRACT and step.output:
-            try:
-                outputs[step.output] = _parse(res.extracted or "", cap.outputs[step.output])
-            except OutputParseError as exc:
-                return fail(FailureKind.OUTPUT_UNPARSEABLE, step.id, str(exc),
-                            expected=cap.outputs[step.output].parse, observed=mask_value(res.extracted))
-
-        for cp in step.expect:
-            ok, observed = surface.check(cp, step.timeout_ms)
+    def _finish(self) -> ReplayResult:
+        if missing := sorted(self.cap.outputs.keys() - self.outputs.keys()):
+            return self._failure(FailureKind.OUTPUT_MISSING, None, f"outputs never extracted: {missing}")
+        for cp in self.cap.success:
+            ok, observed = self.surface.check(cp, 5_000)
             if not ok:
-                return fail(FailureKind.CHECKPOINT_FAILED, step.id, f"after {step.id}, the UI is not where expected",
-                            expected=f"{cp.kind} {cp.pattern} in frame {'/'.join(cp.frame_path) or 'top'}",
-                            observed=observed)
+                return self._failure(FailureKind.SUCCESS_CHECK_FAILED, None, "success condition not met",
+                                     expected=f"{cp.kind} {cp.pattern}", observed=observed)
+        return ReplaySuccess(**self.base, steps=self.traces, recoveries=self.recoveries,
+                             outputs=self.outputs, drift=self.drift)
 
-    if missing := sorted(cap.outputs.keys() - outputs.keys()):
-        return fail(FailureKind.OUTPUT_MISSING, None, f"outputs never extracted: {missing}")
-    for cp in cap.success:
-        ok, observed = surface.check(cp, 5_000)
-        if not ok:
-            return fail(FailureKind.SUCCESS_CHECK_FAILED, None, "success condition not met",
-                        expected=f"{cp.kind} {cp.pattern}", observed=observed)
-    return ReplaySuccess(**base, steps=traces, outputs=outputs, drift=drift)
+    # --- one step ------------------------------------------------------------------------------
+
+    def _step(self, step: Step) -> None:
+        for attempt in range(1, _MAX_STEP_ATTEMPTS + 1):
+            t0 = time.monotonic()
+            value = render(step.value, self.params, self.secrets) if step.value else None
+            if step.action is ActionType.NAVIGATE and value:
+                value = urljoin(self.base_url.rstrip("/") + "/", value.lstrip("/"))
+            res = self.surface.perform(step.action, step.target, value, step.timeout_ms)
+            by = (step.target.strategies[res.strategy_index].by
+                  if step.target and res.strategy_index is not None else None)
+            self.traces.append(StepTrace(step_id=step.id, ok=res.ok, strategy=by, strategy_index=res.strategy_index,
+                                         duration_ms=int((time.monotonic() - t0) * 1000)))
+            self.rec.event("step", step_id=step.id, attempt=attempt, action=step.action, risk=step.risk, ok=res.ok,
+                           strategy=by, strategy_index=res.strategy_index, detail=res.detail, attempts=res.attempts,
+                           extracted=mask_value(res.extracted) if res.extracted else None)
+
+            if not res.ok:
+                # The page may be in a known exceptional state; detectors get the first say.
+                if self._react(step) == "none":
+                    self._fail_if_unrecognised_overlay(step)
+                    desc = step.target.description if step.target else step.value
+                    if res.detail == "target not found":
+                        raise _Stop(self._failure(FailureKind.TARGET_NOT_FOUND, step.id, f"could not find {desc}",
+                                                  expected=_strategies(step), observed="; ".join(res.attempts)))
+                    raise _Stop(self._failure(FailureKind.ACTION_FAILED, step.id, f"{step.action} on {desc} failed",
+                                              expected=step.intent, observed=res.detail))
+                continue  # a recoverable condition was handled; redo the action
+
+            if step.risk != "safe":
+                self.committed = True
+            if res.strategy_index:
+                self.drift.append(f"{step.id}: matched by fallback strategy #{res.strategy_index} ({by})")
+            if step.action is ActionType.EXTRACT and step.output:
+                spec = self.cap.outputs[step.output]
+                try:
+                    self.outputs[step.output] = _parse(res.extracted or "", spec)
+                except OutputParseError as exc:
+                    raise _Stop(self._failure(FailureKind.OUTPUT_UNPARSEABLE, step.id, str(exc),
+                                              expected=spec.parse, observed=mask_value(res.extracted))) from exc
+
+            if self._await(step) == "retry":
+                continue
+            return
+        raise _Stop(self._failure(FailureKind.RECOVERY_EXHAUSTED, step.id,
+                                  f"step still not complete after {_MAX_STEP_ATTEMPTS} attempts"))
+
+    def _await(self, step: Step) -> Literal["ok", "retry"]:
+        """Poll until the step's checkpoints hold, letting detectors react to whatever shows up meanwhile."""
+        deadline = time.monotonic() + step.timeout_ms / 1000
+        while True:
+            reaction = self._react(step)
+            if reaction == "retry":
+                return "retry"
+            if reaction == "handled":
+                deadline = time.monotonic() + step.timeout_ms / 1000  # the handler may have navigated
+                continue
+            pending = [cp for cp in step.expect if not self.surface.check(cp, 0)[0]]
+            if not pending:
+                self._fail_if_unrecognised_overlay(step)
+                return "ok"
+            if time.monotonic() >= deadline:
+                cp = pending[0]
+                _, observed = self.surface.check(cp, 0)
+                self._fail_if_unrecognised_overlay(step)
+                where = "any frame" if cp.any_frame else f"frame {'/'.join(cp.frame_path) or 'top'}"
+                what = cp.pattern or (cp.target.description if cp.target else "")
+                raise _Stop(self._failure(
+                    FailureKind.CHECKPOINT_FAILED, step.id, f"after {step.id}, the UI never reached the expected state",
+                    expected=f"{cp.kind} {what} in {where}", observed=observed))
+            time.sleep(_POLL_S)
+
+    # --- detectors -----------------------------------------------------------------------------
+
+    def _react(self, step: Step) -> Literal["none", "handled", "retry"]:
+        """Check detectors once. Stops the run for outcomes/failures; returns what a recovery asks for."""
+        hit = self._first_detector(step)
+        if hit is None:
+            return "none"
+        det, observed = hit
+        self.rec.event("detector_fired", detector=det.id, detector_class=det.class_, code=det.code,
+                       step_id=step.id, observed=observed)
+        if det.class_ == "business_outcome":
+            shot = self._screenshot(f"outcome-{step.id}")
+            raise _Stop(ReplayBusinessOutcome(**self.base, steps=self.traces, recoveries=self.recoveries,
+                                              code=det.code or "", message=observed or det.description,
+                                              detector_id=det.id, step_id=step.id, screenshot=shot))
+        if det.class_ == "hard_failure":
+            raise _Stop(self._failure(FailureKind.APP_ERROR, step.id, det.description or det.id, code=det.code,
+                                      expected="no error state", observed=observed))
+        return self._recover(det, step)
+
+    def _recover(self, det: Detector, step: Step) -> Literal["handled", "retry"]:
+        self.fired[det.id] += 1
+        if self.fired[det.id] > det.max_times:
+            raise _Stop(self._failure(FailureKind.RECOVERY_EXHAUSTED, step.id,
+                                      f"{det.id} recurred more than {det.max_times} time(s)",
+                                      expected=f"at most {det.max_times} recoveries", observed=det.description))
+        if det.then == "restart" and self.committed:
+            raise _Stop(self._failure(FailureKind.RESTART_UNSAFE, step.id,
+                                      f"{det.id} requires restarting the flow, but a non-safe step already ran",
+                                      expected="restart only before any state-changing step",
+                                      observed=det.description))
+        for h in det.handle:
+            value = render(h.value, self.params, self.secrets) if h.value else None
+            res = self.surface.perform(h.action, h.target, value, 5_000)
+            if not res.ok:
+                raise _Stop(self._failure(FailureKind.RECOVERY_EXHAUSTED, step.id,
+                                          f"handler for {det.id} failed: {res.detail}",
+                                          expected=h.target.description if h.target else h.value,
+                                          observed="; ".join(res.attempts) or res.detail))
+        action = _RECOVERY_ACTION[det.then]
+        self.recoveries.append(Recovery(detector_id=det.id, step_id=step.id, action=action, detail=det.description))
+        self.rec.event("recovery", detector=det.id, step_id=step.id, action=action)
+        if det.then == "restart":
+            raise _Restart()
+        return "retry" if det.then == "retry_step" else "handled"
+
+    def _first_detector(self, step: Step) -> tuple[Detector, str] | None:
+        for det in self.cap.detectors:
+            if det.after_steps is not None and step.id not in det.after_steps:
+                continue
+            observed = ""
+            for cond in det.when:
+                held, seen = self.surface.check(cond, 0)
+                if not held:
+                    break
+                if cond.kind in ("text_visible", "text_matches") and not observed:
+                    observed = seen
+            else:
+                return det, observed
+        return None
+
+    def _fail_if_unrecognised_overlay(self, step: Step) -> None:
+        """Nothing we don't understand may be covering the UI when we move on."""
+        overlays = self.surface.blocking_overlays()
+        if overlays:
+            raise _Stop(self._failure(FailureKind.UNEXPECTED_STATE, step.id,
+                                      "an unrecognised overlay is blocking the application",
+                                      expected="no blocking overlay (or one a detector recognises)",
+                                      observed="; ".join(overlays)))
+
+    # --- helpers -------------------------------------------------------------------------------
+
+    def _failure(self, kind: FailureKind, step_id: str | None, message: str, *, code: str | None = None,
+                 expected: str | None = None, observed: str | None = None) -> ReplayFailure:
+        shot = self._screenshot(f"failure-{step_id or 'run'}")
+        return ReplayFailure(**self.base, steps=self.traces, recoveries=self.recoveries, kind=kind, code=code,
+                             step_id=step_id, message=message, expected=expected, observed=observed,
+                             screenshot=shot)
+
+    def _screenshot(self, name: str) -> str:
+        path = self.rec.screenshot_path(name)
+        self.surface.screenshot(str(path))
+        return str(path)
 
 
 def _parse(raw: str, spec: OutputSpec) -> str:
@@ -145,11 +321,10 @@ def _parse(raw: str, spec: OutputSpec) -> str:
     return text
 
 
-def _strategies(step: object) -> str:
-    target = getattr(step, "target", None)
-    if target is None:
+def _strategies(step: Step) -> str:
+    if step.target is None:
         return ""
-    return " | ".join(s.model_dump_json(exclude={"by"}) + f" by {s.by}" for s in target.strategies)
+    return " | ".join(f"{s.by}: " + s.model_dump_json(exclude={"by"}) for s in step.target.strategies)
 
 
 def _loggable(result: ReplayResult) -> dict[str, object]:

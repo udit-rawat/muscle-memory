@@ -49,12 +49,16 @@ class CompileError(ValueError):
 
 def compile_run(
     run: DiscoveryResult, cap_id: str, summary: str | None = None, pack: str | None = None,
-    packs_dir: Path = Path("packs"),
+    packs_dir: Path = Path("packs"), version: str = "0.1.0",
 ) -> Capability:
+    """`pack`: detector pack name; None = the capability id's app prefix; "none" = deliberately no pack."""
     if run.status != "success":
         raise CompileError(f"only successful runs compile into capabilities (run status: {run.status})")
     entry_path = _relative(run.entry_url)
     flow = [r for r in run.steps if not r.interruption]
+    for rec in flow:
+        if rec.action is ActionType.NAVIGATE and rec.value_template:
+            rec.value_template = _same_origin_path(rec.value_template, run.entry_url)
 
     steps = [Step(id="s01_open_app", intent="Open the application entry page.",
                   action=ActionType.NAVIGATE, value=parameterize(entry_path, run.inputs))]
@@ -72,8 +76,14 @@ def compile_run(
         ))
 
     pack_name = pack if pack is not None else cap_id.split(".")[0]
-    loaded = load_pack(pack_name, packs_dir) if pack_name else None
-    detectors = list(loaded.detectors) if loaded else []
+    detectors: list[Detector] = []
+    if pack_name != "none":
+        loaded = load_pack(pack_name, packs_dir)
+        if loaded is None:
+            # Silently compiling without detectors would turn every business outcome into a hard failure.
+            raise CompileError(f"detector pack {pack_name!r} not found in {packs_dir}/; "
+                               "pass --pack none to compile without one deliberately")
+        detectors = list(loaded.detectors)
     detectors += _learned_detectors(run, detectors)
 
     used_inputs: set[str] = set()
@@ -91,6 +101,7 @@ def compile_run(
 
     return Capability(
         id=cap_id,
+        version=version,
         summary=summary or parameterize(run.goal, run.inputs),
         app=AppRef(name=cap_id.split(".")[0], entry_path=entry_path),
         inputs=inputs,
@@ -118,8 +129,7 @@ def _checkpoints(rec: RecordedStep, nxt: RecordedStep | None) -> list[Checkpoint
     if "" in changed:  # the whole document changed: asserting the top frame is enough
         changed = {"": changed[""]}
     checks = [
-        Checkpoint(kind="url_matches", frame_path=[p for p in key.split("/") if p],
-                   pattern=re.escape(_path(url)) + r"(\?|$)")
+        Checkpoint(kind="url_matches", frame_path=[p for p in key.split("/") if p], pattern=_url_pattern(url))
         for key, url in sorted(changed.items())
     ]
     if not checks and nxt is not None and nxt.target is not None:
@@ -163,8 +173,7 @@ def _success(steps: list[RecordedStep]) -> list[Checkpoint]:
     url = last.frame_urls_after.get(key)
     if not url:
         return []
-    pattern = re.escape(_path(url)) + r"(\?|$)"
-    return [Checkpoint(kind="url_matches", frame_path=last.target.frame_path, pattern=pattern)]
+    return [Checkpoint(kind="url_matches", frame_path=last.target.frame_path, pattern=_url_pattern(url))]
 
 
 def _enum_for(name: str, steps: list[RecordedStep]) -> list[str] | None:
@@ -201,6 +210,23 @@ def _slug(rec: RecordedStep) -> str:
         name = rec.output
     words = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")[:30].strip("_")
     return f"{rec.action.value}_{words}" if words else rec.action.value
+
+
+def _url_pattern(url: str) -> str:
+    """Anchored on scheme://host/<path>: matches this page whatever the host (tenant) and query string,
+    and cannot be satisfied by the path appearing elsewhere in the URL (e.g. inside a redirect parameter)."""
+    return r"^[a-z]+://[^/]+" + re.escape(_path(url)) + r"(\?|#|$)"
+
+
+def _same_origin_path(url: str, entry_url: str) -> str:
+    """A URL the agent navigated to mid-flow, stored relative to the tenant's base URL."""
+    target, entry = urlparse(url), urlparse(entry_url)
+    if not target.netloc:
+        return url
+    if (target.scheme, target.netloc) != (entry.scheme, entry.netloc):
+        raise CompileError(f"flow navigates to another origin ({target.scheme}://{target.netloc}); "
+                           "a capability stays within its application")
+    return _relative(url)
 
 
 def _path(url: str) -> str:

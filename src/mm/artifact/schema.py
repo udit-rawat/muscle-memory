@@ -15,10 +15,10 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from mm.surface.base import ActionType, Checkpoint, Target
+from mm.surface.base import STRUCTURAL, ActionType, Checkpoint, Target
 from mm.values import referenced
 
-SCHEMA_VERSION = "0.2"
+SCHEMA_VERSION = "0.3"
 _ID = re.compile(r"^[a-z0-9_]+(\.[a-z0-9_]+)+$")
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 _CODE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -61,6 +61,10 @@ class Step(BaseModel):
             raise ValueError(f"step {self.id}: {self.action} needs a target")
         if self.action is ActionType.EXTRACT and not self.output:
             raise ValueError(f"step {self.id}: extract needs an output name")
+        structural = [st.by for st in self.target.strategies if st.by in STRUCTURAL] if self.target else []
+        if self.action is ActionType.EXTRACT and structural:
+            raise ValueError(f"step {self.id}: reads may not use structural locators {structural}; a positional "
+                             "match can return a value from the wrong row")
         return self
 
 
@@ -93,7 +97,8 @@ class Detector(BaseModel):
     handle: list[HandlerAction] = Field(default_factory=list, description="recoverable: actions to run.")
     then: Literal["continue", "retry_step", "restart"] = Field(
         "continue", description="recoverable: after handling, keep waiting on the current step, redo it, or "
-                                "restart the flow from the first step (refused once a non-safe step has run).")
+                                "restart the flow from the first step. Redo and restart are refused once a "
+                                "non-safe step may have taken effect (UNSAFE_TO_REPEAT).")
     max_times: int = Field(1, ge=1, le=5, description="recoverable: bound per run; exceeding it is a failure.")
     source: str = Field("", description="Where this detector came from: a pack, a discovery run, or a reviewer.")
 

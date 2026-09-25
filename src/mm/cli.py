@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import typer
@@ -10,16 +11,20 @@ from pydantic import BaseModel
 from rich.console import Console
 
 from mm.config import get_settings
+from mm.evidence.recorder import RunRecorder
+from mm.surface.web import WebSurface
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="muscle-memory: record once, replay many.")
 console = Console()
+err_console = Console(stderr=True)  # replay's stdout is reserved for the JSON result
 
 
 @app.command()
 def mockbank(
     port: int = typer.Option(8600, help="Port to serve on."),
     tenant: str = typer.Option("tenant_a", help="tenant_a | tenant_b"),
-    faults: str = typer.Option("", help="Comma-separated: slow,notice,survey,session_expired,permission,error500"),
+    faults: str = typer.Option(
+        "", help="Comma-separated: slow,notice,survey,permission,error500,session_expired[_on_detail|_on_confirm]"),
 ) -> None:
     """Serve the mock legacy core-banking app."""
     import os
@@ -66,6 +71,17 @@ def doctor(ping: bool = typer.Option(False, help="Make one tiny structured call 
     console.print(f"Target: {s.mockbank_url} (tenant={s.mockbank_tenant})")
 
 
+TRACE_WARNING = ("--trace records a Playwright trace: it stores typed values (including passwords) and full page "
+                 "snapshots, and cannot be redacted. Use it for local debugging only; never commit it.")
+
+
+def web_surface_factory(headless: bool, trace: bool) -> Callable[[RunRecorder], WebSurface]:
+    """How the CLI builds browser sessions. Tests use this too, so they run with production defaults."""
+    def make(rec: RunRecorder) -> WebSurface:
+        return WebSurface(headless=headless, trace_path=rec.trace_path if trace else None)
+    return make
+
+
 def _kv(pairs: list[str]) -> dict[str, str]:
     out: dict[str, str] = {}
     for pair in pairs:
@@ -84,23 +100,24 @@ def discover(
     param: list[str] = typer.Option([], "--param", "-p", help="Task input as name=value; becomes a typed input."),
     output: list[str] = typer.Option([], "--output", "-o", help="Output name the run must extract."),
     max_steps: int = typer.Option(0, help="Step budget (default from settings)."),
-    pack: str = typer.Option(None, help="Detector pack to include (default: the capability id's app prefix)."),
+    pack: str = typer.Option(None, help="Detector pack (default: the capability id's app prefix; 'none' for no pack)."),
     headless: bool = typer.Option(None, "--headless/--headed", help="Override MM_HEADLESS."),
+    trace: bool = typer.Option(False, "--trace", help="Record a Playwright trace (unredacted; local debugging only)."),
 ) -> None:
     """Run the LLM agent on a goal; on success, compile and save a capability artifact."""
     from mm.agent.loop import discover as run_discovery
     from mm.artifact import store
     from mm.artifact.compiler import compile_run
-    from mm.evidence.recorder import RunRecorder
     from mm.llm.router import LLMRouter
-    from mm.surface.web import WebSurface
     from mm.values import SecretStore
 
     s = get_settings()
     secrets = SecretStore.from_settings(s)
     router = LLMRouter.from_settings(s)
     recorder = RunRecorder(s.mm_runs_dir, "discover", secrets)
-    surface = WebSurface(headless=s.mm_headless if headless is None else headless, trace_path=recorder.trace_path)
+    if trace:
+        console.print(f"[yellow]warning:[/] {TRACE_WARNING}")
+    surface = web_surface_factory(s.mm_headless if headless is None else headless, trace)(recorder)
     console.print(f"[bold]discovery[/] {recorder.run_id} → {recorder.dir}")
     try:
         result = run_discovery(
@@ -113,7 +130,7 @@ def discover(
     colour = "green" if result.status == "success" else "red"
     console.print(f"[{colour}]{result.status}[/] after {len(result.steps)} recorded steps: {result.summary}")
     if result.status == "success":
-        cap = compile_run(result, name, pack=pack)
+        cap = compile_run(result, name, pack=pack, version=store.next_version(name))
         path = store.save(cap)
         (recorder.dir / "artifact.yaml").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         recorder.event("artifact_saved", path=str(path), capability=cap.id, version=cap.version)
@@ -128,25 +145,25 @@ def replay(
     param: list[str] = typer.Option([], "--param", "-p", help="Input as name=value."),
     base_url: str = typer.Option("", help="Tenant base URL to bind (default: MOCKBANK_URL)."),
     headless: bool = typer.Option(None, "--headless/--headed", help="Override MM_HEADLESS."),
+    trace: bool = typer.Option(False, "--trace", help="Record a Playwright trace (unredacted; local debugging only)."),
 ) -> None:
     """Replay a capability deterministically (no LLM). Prints the structured result as JSON.
 
     Exit codes: 0 success, 3 business outcome (a legitimate answer, e.g. MEMBER_NOT_FOUND), 2 failure.
     """
     from mm.artifact import store
-    from mm.evidence.recorder import RunRecorder
     from mm.replay.executor import replay as run_replay
-    from mm.surface.web import WebSurface
     from mm.values import SecretStore
 
     s = get_settings()
     cap = store.load(artifact)
     secrets = SecretStore.from_settings(s)
     recorder = RunRecorder(s.mm_runs_dir, "replay", secrets)
-    show = s.mm_headless if headless is None else headless
+    if trace:
+        err_console.print(f"[yellow]warning:[/] {TRACE_WARNING}")
     result = run_replay(
         cap, _kv(param), base_url=base_url or s.mockbank_url, secrets=secrets, recorder=recorder,
-        surface_factory=lambda rec: WebSurface(headless=show, trace_path=rec.trace_path),
+        surface_factory=web_surface_factory(s.mm_headless if headless is None else headless, trace),
     )
     recorder.close()
     print(json.dumps(result.model_dump(mode="json"), indent=2))

@@ -12,7 +12,7 @@ from mm.artifact.schema import Capability
 def save(cap: Capability, root: Path = Path("capabilities")) -> Path:
     path = root / cap.id / f"{cap.version}.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
-    data = cap.model_dump(mode="json", exclude_none=True)
+    data = cap.model_dump(mode="json", exclude_none=True, by_alias=True)
     path.write_text(yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=110), encoding="utf-8")
     return path
 

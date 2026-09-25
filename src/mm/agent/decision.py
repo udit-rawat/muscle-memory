@@ -38,6 +38,7 @@ class Decision(BaseModel):
         inputs: set[str] = ctx.get("inputs", set())
         secrets: set[str] = ctx.get("secrets", set())
         extracted: set[str] = ctx.get("extracted", set())
+        overlay: str = ctx.get("overlay", "")
 
         if self.action in ("click", "fill", "select", "extract"):
             if not self.ref:
@@ -54,6 +55,10 @@ class Decision(BaseModel):
             raise ValueError(f"{self.action} requires 'summary'")
         if self.interruption and self.action != "click":
             raise ValueError("only a click can be marked as dismissing an interruption")
+        dismissing = self.action == "click" and self.interruption
+        if overlay and not dismissing and self.action not in ("request_human", "fail"):
+            raise ValueError(f"a blocking overlay covers the screen ({overlay[:80]}); dismiss it first with a click "
+                             "marked interruption=true, or request_human")
         for m in re.finditer(r"\{\{\s*(secret:)?([A-Za-z_][A-Za-z0-9_]*)\s*\}\}", self.value or ""):
             known = secrets if m.group(1) else inputs
             if m.group(2) not in known:
@@ -62,13 +67,13 @@ class Decision(BaseModel):
         return self
 
 
-def for_screen(refs: set[str], inputs: set[str], secrets: set[str], extracted: set[str] | None = None
-               ) -> type[Decision]:
+def for_screen(refs: set[str], inputs: set[str], secrets: set[str], extracted: set[str] | None = None,
+               overlay: str = "") -> type[Decision]:
     """A Decision type whose validator knows what is on the current screen and what is already done."""
 
     class ScreenDecision(Decision):
         screen: ClassVar[dict[str, Any]] = {"refs": refs, "inputs": inputs, "secrets": secrets,
-                                            "extracted": extracted or set()}
+                                            "extracted": extracted or set(), "overlay": overlay}
 
     ScreenDecision.__name__ = ScreenDecision.__qualname__ = "Decision"
     return ScreenDecision

@@ -7,6 +7,7 @@ template. The compiler turns that into a Capability; the transcript stays in the
 
 from __future__ import annotations
 
+import contextlib
 import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -15,12 +16,12 @@ from typing import Literal
 from mm.agent.decision import for_screen
 from mm.agent.prompts import SYSTEM, user_message
 from mm.evidence.recorder import RunRecorder
-from mm.llm.router import LLMRouter
+from mm.llm.router import LLMRouter, LLMUnavailable
 from mm.redact import mask_value
 from mm.surface.base import ActionType, Surface, Target
 from mm.values import SecretStore, TemplateError, parameterize, referenced, render
 
-Status = Literal["success", "failed", "stuck", "needs_human", "max_steps", "timeout"]
+Status = Literal["success", "failed", "stuck", "needs_human", "max_steps", "timeout", "llm_error", "error"]
 
 
 @dataclass
@@ -66,7 +67,12 @@ def discover(
     result = DiscoveryResult(recorder.run_id, "max_steps", "", goal, entry_url, dict(inputs))
     recorder.event("discovery_start", goal=goal, entry_url=entry_url, inputs=dict(inputs),
                    required_outputs=required_outputs, secrets=secrets.names)
-    surface.navigate(entry_url)
+    try:
+        surface.navigate(entry_url)
+    except Exception as exc:  # noqa: BLE001 — an unreachable app ends discovery with a status, not a traceback
+        result.status, result.summary = "error", f"could not open {entry_url}: {exc}"
+        recorder.event("discovery_end", status=result.status, summary=result.summary, steps=0)
+        return result
     history: list[str] = []
     recent: list[tuple[str, str, str]] = []
     consecutive_failures = 0
@@ -78,6 +84,8 @@ def discover(
             result.status, result.summary = "timeout", f"no result after {timeout_s:.0f}s"
             break
         obs = surface.observe()
+        # Reading or acting underneath a modal would record a flow in a state replay never sees.
+        overlay = "; ".join(surface.blocking_overlays())
         prompt = user_message(goal, inputs, secrets.names, list(result.outputs), history, obs)
         notes = []
         if required_outputs:
@@ -87,28 +95,42 @@ def discover(
         if required_outputs and not [o for o in required_outputs if o not in result.outputs] and not unused:
             notes.append("STATUS: every required output is extracted and every input entered. "
                          "If the screen confirms the goal is achieved, respond with done.")
+        if overlay:
+            notes.append(f"BLOCKING OVERLAY on screen: {overlay}. Dismiss it first (click, interruption=true).")
         if notes:
             prompt = prompt.replace("\n\nHISTORY", "\n" + "\n".join(notes) + "\n\nHISTORY", 1)
         recorder.write_text(f"prompts/{n:02d}.txt", prompt)
 
-        call = router.structured(
-            for_screen({e.ref for e in obs.elements}, set(inputs), set(secrets.names), set(result.outputs)),
-            [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
-        )
+        try:
+            call = router.structured(
+                for_screen({e.ref for e in obs.elements}, set(inputs), set(secrets.names), set(result.outputs),
+                           overlay),
+                [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
+            )
+        except LLMUnavailable as exc:
+            result.status, result.summary = "llm_error", str(exc)
+            recorder.event("llm_unavailable", step=n, errors=exc.errors)
+            break
         d = call.value
         result.provider, result.model = call.provider, call.model
         element = next((e for e in obs.elements if e.ref == d.ref), None)
+        if element is not None and element.role == "cell":
+            recorder.taint(element.name)  # a cell's name is its content: mask it before it is logged
         described = f'{element.role} "{element.name}"' if element else ""
         recorder.event("decision", step=n, provider=call.provider, model=call.model,
                        tokens={"in": call.input_tokens, "out": call.output_tokens},
-                       thought=d.thought, action=d.action, ref=d.ref, element=described,
-                       value=d.value, output_name=d.output_name, summary=d.summary)
+                       thought=d.thought, action=d.action, ref=d.ref, element=described, value=d.value,
+                       output_name=d.output_name, interruption=d.interruption, summary=d.summary)
 
         if d.action == "done":
             missing = [o for o in required_outputs if o not in result.outputs]
             unused = [k for k in inputs if k not in entered]
             if missing or unused:
                 history.append(f"{n}. done REJECTED: missing outputs {missing}, inputs never entered {unused}")
+                consecutive_failures += 1  # a rejected "done" is not progress
+                if consecutive_failures >= 3:
+                    result.status, result.summary = "stuck", f"no progress after step {n}: {history[-1]}"
+                    break
                 continue
             result.status, result.summary = "success", d.summary or ""
             break
@@ -123,9 +145,11 @@ def discover(
             concrete = render(template, inputs, secrets) if template else None
         except TemplateError as exc:
             history.append(f"{n}. {d.action} {described} -> REJECTED: {exc}")
+            consecutive_failures += 1
             continue
         before = _frame_urls(surface)
         res = surface.act(action, d.ref, concrete)
+        recorder.taint(res.extracted)
         recorder.event("act", step=n, ok=res.ok, detail=res.detail,
                        target=res.target.model_dump(mode="json") if res.target else None,
                        extracted=mask_value(res.extracted) if res.extracted else None,
@@ -153,7 +177,8 @@ def discover(
             break
 
     shot = recorder.screenshot_path("final")
-    surface.screenshot(str(shot))
+    with contextlib.suppress(Exception):  # evidence is best-effort once the run has ended
+        surface.screenshot(str(shot))
     recorder.event("discovery_end", status=result.status, summary=result.summary, steps=len(result.steps),
                    outputs=_masked(result.outputs), screenshot=str(shot))
     return result

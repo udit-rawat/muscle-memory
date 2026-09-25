@@ -61,4 +61,6 @@ def user_message(
         val = f" value={e.value!r}" if e.value else ""
         opts = f" options=[{' | '.join(e.options)}]" if e.options else ""
         lines.append(f"[{e.ref}] {e.role} \"{e.name}\"{val}{opts}{where}")
+    if obs.truncated:
+        lines.append(f"({obs.truncated} more elements not shown: the screen is larger than the observation limit)")
     return "\n".join(lines)

@@ -72,7 +72,7 @@ Strategy = Annotated[
     Field(discriminator="by"),
 ]
 
-STRUCTURAL = {"attr", "css"}
+STRUCTURAL = {"attr", "css"}  # positional/markup-bound: fine to find a button, never trusted for a read
 
 
 class Target(BaseModel):
@@ -124,11 +124,21 @@ class Observation(BaseModel):
     title: str
     elements: list[ElementRef]
     frames: list[FrameText] = Field(default_factory=list)
+    truncated: int = Field(0, description="Elements left out because the observation hit its size cap.")
     screenshot_png: bytes | None = Field(default=None, repr=False, exclude=True)
+
+
+ActError = Literal[
+    "not_found",          # no strategy resolved to exactly one element: nothing was dispatched
+    "untargetable",       # discovery: no replayable locator could be built, so the action was not performed
+    "action_failed",      # the element was found and the action attempted; its effect is unknown
+    "navigation_failed",  # the page could not be loaded (app down, DNS, TLS, refused)
+]
 
 
 class ActResult(BaseModel):
     ok: bool
+    error: ActError | None = None
     detail: str = ""
     target: Target | None = None  # discovery: verified, replayable target for the element acted on
     strategy_index: int | None = None  # replay: which strategy matched (>0 is a drift signal)

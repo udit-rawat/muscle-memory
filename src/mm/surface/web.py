@@ -20,6 +20,7 @@ from playwright.sync_api import Error as PlaywrightError
 
 from mm.surface import js
 from mm.surface.base import (
+    STRUCTURAL,
     ActionType,
     ActResult,
     AttrStrategy,
@@ -40,6 +41,14 @@ from mm.surface.base import (
 MAX_ELEMENTS = 150
 FRAME_TEXT_CHARS = 700
 _POLL_MS = 150
+
+
+class NavigationFailed(Exception):
+    pass
+
+
+class ValueNotRetained(Exception):
+    pass
 
 
 class WebSurface:
@@ -72,16 +81,21 @@ class WebSurface:
         self.page.screenshot(path=path)
 
     def navigate(self, url: str) -> None:
-        self.page.goto(url, wait_until="domcontentloaded")
+        """Raises NavigationFailed if the page cannot be loaded at all."""
+        try:
+            self.page.goto(url, wait_until="domcontentloaded")
+        except PlaywrightError as exc:
+            raise NavigationFailed(_first_line(exc)) from exc
         self._settle()
 
     # --- discovery -----------------------------------------------------------------------------
 
     def observe(self, with_screenshot: bool = False) -> Observation:
         self._refs.clear()
+        truncated = 0
         elements: list[ElementRef] = []
         frames: list[FrameText] = []
-        for frame in self.page.frames:
+        for frame in self._live_frames():
             path = frame_path(frame)
             try:
                 text = str(frame.evaluate(js.BODY_TEXT))
@@ -91,10 +105,11 @@ class WebSurface:
                 frames.append(FrameText(frame_path=path, url=frame.url, text=_squash(text)[:FRAME_TEXT_CHARS]))
             for selector in (js.INTERACTIVE_SELECTOR, js.READABLE_SELECTOR):
                 for handle in frame.query_selector_all(selector):
-                    if len(elements) >= MAX_ELEMENTS:
-                        break
                     desc = handle.evaluate(js.DESCRIBE)
                     if not desc["visible"] or (desc["role"] == "cell" and (desc["nested"] or not desc["name"])):
+                        continue
+                    if len(elements) >= MAX_ELEMENTS:
+                        truncated += 1  # reported to the model, never silently dropped
                         continue
                     ref = f"e{len(elements) + 1}"
                     self._refs[ref] = (frame, handle, desc)
@@ -102,22 +117,30 @@ class WebSurface:
                                                value=desc["value"], options=desc["options"], frame_path=path))
         shot = self.page.screenshot() if with_screenshot else None
         return Observation(url=self.page.url, title=self.page.title(), elements=elements,
-                           frames=frames, screenshot_png=shot)
+                           frames=frames, truncated=truncated, screenshot_png=shot)
 
     def act(self, action: ActionType, ref: str | None, value: str | None = None) -> ActResult:
         if action is ActionType.NAVIGATE:
             if not value:
-                return ActResult(ok=False, detail="navigate needs a url")
-            self.navigate(value)
+                return ActResult(ok=False, error="action_failed", detail="navigate needs a url")
+            try:
+                self.navigate(value)
+            except NavigationFailed as exc:
+                return ActResult(ok=False, error="navigation_failed", detail=str(exc))
             return ActResult(ok=True, frame_urls=self.frame_urls())
         if ref not in self._refs:
-            return ActResult(ok=False, detail=f"unknown ref {ref!r}; use a ref from the latest observation")
+            return ActResult(ok=False, error="not_found",
+                             detail=f"unknown ref {ref!r}; use a ref from the latest observation")
         frame, handle, desc = self._refs[ref]
         target = self._build_target(frame, handle, desc, action)
+        if target is None:
+            # Acting on something replay could never find again would record a step that cannot be replayed.
+            return ActResult(ok=False, error="untargetable",
+                             detail="no locator uniquely identifies this element; choose another control")
         try:
             extracted = self._do(action, handle, value)
-        except PlaywrightError as exc:
-            return ActResult(ok=False, detail=_first_line(exc), target=target)
+        except (PlaywrightError, ValueNotRetained) as exc:
+            return ActResult(ok=False, error="action_failed", detail=_first_line(exc), target=target)
         self._settle()
         return ActResult(ok=True, target=target, extracted=extracted, options=desc["options"],
                          frame_urls=self.frame_urls())
@@ -132,15 +155,22 @@ class WebSurface:
         if action is ActionType.NAVIGATE:
             return self.act(action, None, value)
         if target is None:
-            return ActResult(ok=False, detail=f"{action} needs a target")
+            return ActResult(ok=False, error="not_found", detail=f"{action} needs a target")
+        if action is ActionType.EXTRACT:
+            # A read is only trusted from a semantic locator. A positional one (css, form-field name) can land
+            # on a different row and return someone else's number with nothing looking wrong.
+            target = target.model_copy(update={"strategies": [s for s in target.strategies if s.by not in STRUCTURAL]})
+            if not target.strategies:
+                return ActResult(ok=False, error="not_found", detail="target not found (no semantic locator)")
         loc, _, idx, attempts = self._resolve(target, timeout_ms)
         if loc is None:
-            return ActResult(ok=False, detail="target not found", attempts=attempts)
-        handle = loc.element_handle(timeout=timeout_ms)
+            return ActResult(ok=False, error="not_found", detail="target not found", attempts=attempts)
         try:
+            handle = loc.element_handle(timeout=timeout_ms)
             extracted = self._do(action, handle, value)
-        except PlaywrightError as exc:
-            return ActResult(ok=False, detail=_first_line(exc), strategy_index=idx, attempts=attempts)
+        except (PlaywrightError, ValueNotRetained) as exc:
+            return ActResult(ok=False, error="action_failed", detail=_first_line(exc), strategy_index=idx,
+                             attempts=attempts)
         self._settle()
         return ActResult(ok=True, strategy_index=idx, attempts=attempts, extracted=extracted,
                          frame_urls=self.frame_urls())
@@ -161,7 +191,7 @@ class WebSurface:
         capability was never recorded in, and replay must not carry on underneath it.
         """
         found: list[str] = []
-        for frame in self.page.frames:
+        for frame in self._live_frames():
             try:
                 text = frame.evaluate(js.BLOCKING_OVERLAY)
             except PlaywrightError:
@@ -172,7 +202,7 @@ class WebSurface:
         return found
 
     def _check_once(self, cp: Checkpoint) -> tuple[bool, str]:
-        frames = self.page.frames if cp.any_frame else [f for f in [self._frame(cp.frame_path)] if f]
+        frames = self._live_frames() if cp.any_frame else [f for f in [self._frame(cp.frame_path)] if f]
         if not frames:
             return False, f"frame {'/'.join(cp.frame_path)} not found"
         observed: list[str] = []
@@ -204,7 +234,7 @@ class WebSurface:
         return False, " | ".join(o for o in observed if o)[:300]
 
     def frame_urls(self) -> dict[str, str]:
-        return {"/".join(frame_path(f)): f.url for f in self.page.frames}
+        return {"/".join(frame_path(f)): f.url for f in self._live_frames()}
 
     # --- internals -----------------------------------------------------------------------------
 
@@ -213,17 +243,26 @@ class WebSurface:
             handle.click(timeout=5000)
         elif action is ActionType.FILL:
             handle.fill(value or "", timeout=5000)
+            # Never assume typing worked: masks, maxlength and scripts can silently change what is kept.
+            if handle.input_value() != (value or ""):
+                raise ValueNotRetained("value not retained by the field after typing")
         elif action is ActionType.SELECT:
             try:
                 handle.select_option(label=value or "", timeout=5000)
             except PlaywrightError:
                 handle.select_option(value=value or "", timeout=5000)
+            chosen = handle.evaluate("el => [el.value, el.selectedOptions[0] ? el.selectedOptions[0].text.trim() : '']")
+            if (value or "") not in chosen:
+                raise ValueNotRetained("option not selected after choosing it")
         elif action is ActionType.EXTRACT:
             return _squash(handle.inner_text())
         return None
 
-    def _build_target(self, frame: Frame, handle: ElementHandle, desc: dict[str, Any], action: ActionType) -> Target:
-        """Candidate strategies, most semantic first; keep only those that uniquely hit *this* element."""
+    def _build_target(
+        self, frame: Frame, handle: ElementHandle, desc: dict[str, Any], action: ActionType
+    ) -> Target | None:
+        """Candidate strategies, most semantic first; keep only those that uniquely hit *this* element.
+        None if nothing does: that element cannot be part of a replayable flow."""
         candidates: list[Strategy] = []
         if action is ActionType.EXTRACT and desc["tag"] == "td":
             ctx = handle.evaluate(js.CELL_CONTEXT)
@@ -241,9 +280,11 @@ class WebSurface:
                 candidates.append(TextStrategy(text=desc["text"]))
             if desc["name_attr"]:
                 candidates.append(AttrStrategy(tag=desc["tag"], name=desc["name_attr"]))
-        candidates.append(CssStrategy(selector=desc["css"]))
+            candidates.append(CssStrategy(selector=desc["css"]))  # never for reads: see perform()
 
         verified = [s for s in candidates if self._is_unique_match(frame, s, handle)]
+        if not verified:
+            return None
         path = frame_path(frame)
         where = f" in frame {'/'.join(path)}" if path else ""
         first = verified[0] if verified else None
@@ -253,7 +294,7 @@ class WebSurface:
             label = f'cell [row "{first.row_key}" x {column}]'
         else:
             label = f'{desc["role"]} "{desc["name"][:60]}"'
-        return Target(frame_path=path, strategies=verified or candidates[-1:], description=label + where)
+        return Target(frame_path=path, strategies=verified, description=label + where)
 
     def _is_unique_match(self, frame: Frame, strategy: Strategy, handle: ElementHandle) -> bool:
         try:
@@ -287,7 +328,9 @@ class WebSurface:
     def _frame(self, path: list[str]) -> Frame | None:
         frame = self.page.main_frame
         for part in path:
-            children = frame.child_frames
+            # Detached frames linger in child_frames after the frameset is reloaded (e.g. after a re-login);
+            # matching one by name would act on a dead frame, so only live frames are candidates.
+            children = [c for c in frame.child_frames if not c.is_detached()]
             nxt = next((c for c in children if c.name == part), None)
             if nxt is None and part.startswith("#") and part[1:].isdigit() and int(part[1:]) < len(children):
                 nxt = children[int(part[1:])]
@@ -295,6 +338,9 @@ class WebSurface:
                 return None
             frame = nxt
         return frame
+
+    def _live_frames(self) -> list[Frame]:
+        return [f for f in self.page.frames if not f.is_detached()]
 
     def _settle(self, quiet_ms: int = 250, timeout_ms: int = 15000) -> None:
         """Wait until no request has been in flight for `quiet_ms` (across all frames)."""
@@ -318,7 +364,8 @@ def frame_path(frame: Frame) -> list[str]:
     path: list[str] = []
     while frame.parent_frame is not None:
         parent = frame.parent_frame
-        path.insert(0, frame.name or f"#{parent.child_frames.index(frame)}")
+        live = [c for c in parent.child_frames if not c.is_detached()]
+        path.insert(0, frame.name or f"#{live.index(frame) if frame in live else 0}")
         frame = parent
     return path
 

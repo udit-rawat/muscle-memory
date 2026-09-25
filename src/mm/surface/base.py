@@ -133,12 +133,15 @@ ActError = Literal[
     "untargetable",       # discovery: no replayable locator could be built, so the action was not performed
     "action_failed",      # the element was found and the action attempted; its effect is unknown
     "navigation_failed",  # the page could not be loaded (app down, DNS, TLS, refused)
+    "policy_blocked",     # refused by the safety policy (allowlist, action type, unapproved irreversible step)
+    "control_not_held",   # automation does not hold the session's control lease (a human does)
 ]
 
 
 class ActResult(BaseModel):
     ok: bool
     error: ActError | None = None
+    dispatched: bool | None = None  # set when an error happened after the action was already sent to the app
     detail: str = ""
     target: Target | None = None  # discovery: verified, replayable target for the element acted on
     strategy_index: int | None = None  # replay: which strategy matched (>0 is a drift signal)
@@ -171,4 +174,6 @@ class Surface(Protocol):
     def blocking_overlays(self) -> list[str]: ...
 
     def screenshot(self, path: str) -> None: ...
+    def idle(self, ms: int) -> None: ...  # let the session's event loop run (e.g. while a human works)
+    def drain_blocked_requests(self) -> list[str]: ...  # requests the network policy refused since last call
     def close(self) -> None: ...

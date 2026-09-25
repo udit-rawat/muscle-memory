@@ -107,3 +107,35 @@ BLOCKING_OVERLAY = r"""
   return text || '(untitled overlay)';
 }
 """
+
+# Installed in every frame while a handoff is possible. Reports what a human does in the live session,
+# never what they type: for a text field only the length of the new value is sent.
+CAPTURE = r"""
+(() => {
+  if (window.__mmCaptureInstalled) return;
+  window.__mmCaptureInstalled = true;
+  const txt = (s) => (s || '').replace(/\s+/g, ' ').trim().slice(0, 80);
+  const describe = (el) => {
+    const tag = el.tagName.toLowerCase();
+    const label = el.getAttribute('aria-label') || el.getAttribute('title')
+      || (el.labels && el.labels[0] && el.labels[0].innerText)
+      || (tag === 'input' && ['submit', 'button'].includes(el.type) ? el.value : '') || el.innerText;
+    return { tag, name: txt(label) };
+  };
+  const send = (kind, el, detail) => {
+    try { window.__mmCapture(Object.assign({ kind, frame: location.pathname, detail: detail || '' }, describe(el))); }
+    catch (e) { /* capture must never break the page */ }
+  };
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest('a, button, input, select, textarea, [role=button]') || e.target;
+    send('click', el);
+  }, true);
+  document.addEventListener('change', (e) => {
+    const el = e.target;
+    const detail = el.tagName === 'SELECT'
+      ? 'chose ' + txt(el.selectedOptions[0] && el.selectedOptions[0].text)
+      : 'entered ' + (el.value || '').length + ' characters';
+    send('change', el, detail);
+  }, true);
+})();
+"""

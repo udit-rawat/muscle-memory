@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import ElementHandle, Frame, Locator, Page, sync_playwright
+from playwright.sync_api import ElementHandle, Frame, Locator, Page, Route, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 
+from mm.redact import PII_ANY
 from mm.surface import js
 from mm.surface.base import (
     STRUCTURAL,
@@ -43,6 +45,10 @@ FRAME_TEXT_CHARS = 700
 _POLL_MS = 150
 
 
+# (method, url, irreversible_window) -> (allowed, reason)
+RequestPolicy = Callable[[str, str, bool], tuple[bool, str]]
+
+
 class NavigationFailed(Exception):
     pass
 
@@ -52,13 +58,30 @@ class ValueNotRetained(Exception):
 
 
 class WebSurface:
-    def __init__(self, headless: bool = True, trace_path: Path | None = None, slow_mo_ms: int = 0) -> None:
+    def __init__(
+        self,
+        headless: bool = True,
+        trace_path: Path | None = None,
+        slow_mo_ms: int = 0,
+        request_policy: RequestPolicy | None = None,
+        on_human_action: Callable[[dict[str, Any]], None] | None = None,
+    ) -> None:
+        """request_policy: consulted for every request any frame makes; refused requests are aborted in
+        the browser before they leave it. on_human_action: receives clicks/changes made in the page."""
         self._pw = sync_playwright().start()
         self._browser = self._pw.chromium.launch(headless=headless, slow_mo=slow_mo_ms)
         self._context = self._browser.new_context(viewport={"width": 1280, "height": 800})
         self._trace_path = trace_path
         if trace_path:
             self._context.tracing.start(screenshots=True, snapshots=True)
+        self._request_policy = request_policy
+        self._blocked: list[str] = []
+        self.irreversible_window = False  # set only while an approved irreversible step is being performed
+        if request_policy is not None:
+            self._context.route("**/*", self._route)
+        if on_human_action is not None:
+            self._context.expose_binding("__mmCapture", lambda _source, payload: on_human_action(payload))
+            self._context.add_init_script(js.CAPTURE)
         self.page: Page = self._context.new_page()
         self._inflight = 0
         self.page.on("request", self._on_request)
@@ -78,7 +101,27 @@ class WebSurface:
             self._pw.stop()
 
     def screenshot(self, path: str) -> None:
-        self.page.screenshot(path=path)
+        """Evidence screenshot with PII-looking text (amounts, SSNs, account numbers) blacked out."""
+        masks = [f.get_by_text(PII_ANY) for f in self._live_frames()]
+        masks += [f.locator("input[type=password]") for f in self._live_frames()]
+        self.page.screenshot(path=path, mask=masks, mask_color="#000")
+
+    def idle(self, ms: int) -> None:
+        self.page.wait_for_timeout(ms)
+
+    def drain_blocked_requests(self) -> list[str]:
+        blocked, self._blocked = self._blocked, []
+        return blocked
+
+    def _route(self, route: Route) -> None:
+        req = route.request
+        assert self._request_policy is not None
+        allowed, why = self._request_policy(req.method, req.url, self.irreversible_window)
+        if allowed:
+            route.continue_()
+        else:
+            self._blocked.append(f"{req.method} {req.url}: {why}")
+            route.abort("blockedbyclient")
 
     def navigate(self, url: str) -> None:
         """Raises NavigationFailed if the page cannot be loaded at all."""

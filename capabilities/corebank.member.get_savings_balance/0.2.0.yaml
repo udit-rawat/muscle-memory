@@ -1,0 +1,454 @@
+schema_version: '0.3'
+id: corebank.member.get_savings_balance
+version: 0.2.0
+status: draft
+summary: Sign in, look up member {{member_id}} and read their current Share Savings balance
+app:
+  name: corebank
+  entry_path: /login
+inputs:
+  member_id:
+    type: string
+    description: Numeric identifier.
+    pattern: ^[0-9]+$
+    sensitive: false
+outputs:
+  savings_balance:
+    type: decimal
+    parse: currency
+    description: ''
+    sensitive: true
+outcomes:
+- MEMBER_NOT_FOUND
+- PERMISSION_DENIED
+- RECORD_NOT_FOUND
+- VALIDATION_REJECTED
+secrets:
+- MOCKBANK_PASSWORD
+- MOCKBANK_USERNAME
+steps:
+- id: s01_open_app
+  intent: Open the application entry page.
+  action: navigate
+  value: /login
+  expect: []
+  risk: safe
+  timeout_ms: 10000
+- id: s02_fill_operator_id
+  intent: Fill credentials and sign on to access member lookup
+  action: fill
+  target:
+    frame_path: []
+    strategies:
+    - by: role
+      role: textbox
+      name: Operator ID
+    - by: title
+      title: Operator ID
+    - by: attr
+      tag: input
+      name: username
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Operator ID"
+  value: '{{secret:MOCKBANK_USERNAME}}'
+  expect:
+  - kind: target_present
+    frame_path: []
+    any_frame: false
+    target:
+      frame_path: []
+      strategies:
+      - by: role
+        role: textbox
+        name: Password
+      - by: title
+        title: Password
+      - by: attr
+        tag: input
+        name: password
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+          > td:nth-of-type(2) > input:nth-of-type(1)
+      description: textbox "Password"
+  risk: safe
+  timeout_ms: 10000
+- id: s03_fill_password
+  intent: Enter password and submit to sign in
+  action: fill
+  target:
+    frame_path: []
+    strategies:
+    - by: role
+      role: textbox
+      name: Password
+    - by: title
+      title: Password
+    - by: attr
+      tag: input
+      name: password
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Password"
+  value: '{{secret:MOCKBANK_PASSWORD}}'
+  expect:
+  - kind: target_present
+    frame_path: []
+    any_frame: false
+    target:
+      frame_path: []
+      strategies:
+      - by: role
+        role: button
+        name: Sign On
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(4)
+          > td:nth-of-type(1) > input:nth-of-type(1)
+      description: button "Sign On"
+  risk: safe
+  timeout_ms: 10000
+- id: s04_click_sign_on
+  intent: Click Sign On to log in and proceed to member lookup
+  action: click
+  target:
+    frame_path: []
+    strategies:
+    - by: role
+      role: button
+      name: Sign On
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(4)
+        > td:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Sign On"
+  expect:
+  - kind: url_matches
+    frame_path: []
+    any_frame: false
+    pattern: ^[a-z]+://[^/]+/core/main\.jsp(\?|#|$)
+  risk: safe
+  timeout_ms: 10000
+- id: s05_click_member_search
+  intent: Navigate to Member Search to look up the member ID
+  action: click
+  target:
+    frame_path:
+    - nav
+    strategies:
+    - by: role
+      role: link
+      name: Member Search
+    - by: text
+      text: Member Search
+    - by: css
+      selector: body:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(1)
+        > a:nth-of-type(1)
+    description: link "Member Search" in frame nav
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: ^[a-z]+://[^/]+/core/mbrsrch\.jsp(\?|#|$)
+  risk: safe
+  timeout_ms: 10000
+- id: s06_fill_member
+  intent: Enter the member ID and search to view the member details.
+  action: fill
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: textbox
+      name: 'Member #'
+    - by: title
+      title: 'Member #'
+    - by: attr
+      tag: input
+      name: mbr_no
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: 'textbox "Member #" in frame main'
+  value: '{{member_id}}'
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Search
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+          > td:nth-of-type(1) > input:nth-of-type(1)
+      description: button "Search" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s07_click_search
+  intent: Click Search to retrieve member details
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: button
+      name: Search
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+        > td:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Search" in frame main
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: link
+        name: Select
+      - by: text
+        text: Select
+      - by: css
+        selector: body:nth-of-type(1) > table:nth-of-type(2) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(4)
+          > a:nth-of-type(1)
+      description: link "Select" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s08_click_select
+  intent: Click the Select link to open the member's account details page.
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: link
+      name: Select
+    - by: text
+      text: Select
+    - by: css
+      selector: body:nth-of-type(1) > table:nth-of-type(2) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(4)
+        > a:nth-of-type(1)
+    description: link "Select" in frame main
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: ^[a-z]+://[^/]+/core/mbrdtl\.jsp(\?|#|$)
+  risk: safe
+  timeout_ms: 10000
+- id: s09_extract_savings_balance
+  intent: Extract the Share Savings balance value.
+  action: extract
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: table_cell
+      row_key: Share Savings
+      column_header: Balance
+    - by: table_cell
+      row_key: SAVINGS
+      column_header: Balance
+    - by: table_cell
+      row_key: S00
+      column_header: Balance
+    description: cell [row "Share Savings" x Balance] in frame main
+  output: savings_balance
+  expect: []
+  risk: safe
+  timeout_ms: 10000
+detectors:
+- id: credentials_rejected
+  class: hard_failure
+  description: Sign-on refused. Credentials are wrong or expired; retrying would risk a lockout.
+  when:
+  - kind: text_visible
+    frame_path: []
+    any_frame: false
+    pattern: Invalid operator ID or password
+  code: CREDENTIALS_REJECTED
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: session_expired
+  class: recoverable
+  description: Session timed out and the app bounced to sign-on. Sign on again by restarting the flow.
+  when:
+  - kind: url_matches
+    frame_path: []
+    any_frame: true
+    pattern: ^[a-z]+://[^/]+/login(\?|$)
+  - kind: text_visible
+    frame_path: []
+    any_frame: true
+    pattern: session has expired
+  handle: []
+  then: restart
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: app_error
+  class: hard_failure
+  description: The application returned a server error page.
+  when:
+  - kind: text_matches
+    frame_path: []
+    any_frame: true
+    pattern: HTTP 500|Internal Error|Exception
+  code: APP_ERROR
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: system_notice
+  class: recoverable
+  description: Broadcast System Notice interstitial; acknowledge it and carry on.
+  when:
+  - kind: text_visible
+    frame_path:
+    - main
+    any_frame: false
+    pattern: System Notice
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Acknowledge
+      description: ''
+  handle:
+  - action: click
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Acknowledge
+      description: button "Acknowledge" in frame main
+  then: continue
+  max_times: 2
+  source: pack:corebank@1.1.0
+- id: permission_denied
+  class: business_outcome
+  description: The operator is not entitled to this record.
+  when:
+  - kind: text_visible
+    frame_path: []
+    any_frame: true
+    pattern: not authorized
+  code: PERMISSION_DENIED
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: member_not_found
+  class: business_outcome
+  description: The member search returned no match.
+  when:
+  - kind: text_visible
+    frame_path: []
+    any_frame: true
+    pattern: No member matches the search criteria
+  code: MEMBER_NOT_FOUND
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: record_not_found
+  class: business_outcome
+  description: A direct record lookup found nothing.
+  when:
+  - kind: text_visible
+    frame_path: []
+    any_frame: true
+    pattern: Record not found.
+  code: RECORD_NOT_FOUND
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: validation_rejected
+  class: business_outcome
+  description: The app rejected the submitted values; the message says why.
+  when:
+  - kind: text_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: (?i)(must be|is required|exceeds|select an account type|override required)
+  code: VALIDATION_REJECTED
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: learned_click_maybe_later
+  class: recoverable
+  description: 'Seen during discovery and dismissed by the agent: Dismiss the Quick Survey overlay to access the
+    member data'
+  when:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Maybe Later
+      - by: text
+        text: Maybe Later
+      - by: css
+        selector: body:nth-of-type(1) > div:nth-of-type(2) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2)
+          > td:nth-of-type(1) > a:nth-of-type(1) > button:nth-of-type(1)
+      description: button "Maybe Later" in frame main
+  handle:
+  - action: click
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Maybe Later
+      - by: text
+        text: Maybe Later
+      - by: css
+        selector: body:nth-of-type(1) > div:nth-of-type(2) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2)
+          > td:nth-of-type(1) > a:nth-of-type(1) > button:nth-of-type(1)
+      description: button "Maybe Later" in frame main
+  then: continue
+  max_times: 2
+  source: discovery:discover-20260925T202152Z-268e58
+success:
+- kind: url_matches
+  frame_path:
+  - main
+  any_frame: false
+  pattern: ^[a-z]+://[^/]+/core/mbrdtl\.jsp(\?|#|$)
+provenance:
+  discovery_run_id: discover-20260925T202152Z-268e58
+  recorded_at: '2026-09-25T20:22:16.289822Z'
+  provider: groq
+  model: openai/gpt-oss-120b
+  goal_template: Sign in, look up member {{member_id}} and read their current Share Savings balance

@@ -1,0 +1,660 @@
+schema_version: '0.3'
+id: corebank.member.open_sub_account
+version: 0.2.0
+status: draft
+summary: Sign in, open the record of member {{member_id}}, open a new sub-account of type {{account_type}} with
+  an opening deposit of {{deposit}} and the nickname {{nickname}}, confirm it, and read the confirmation number
+  and the new account suffix from the confirmation screen
+app:
+  name: corebank
+  entry_path: /login
+inputs:
+  member_id:
+    type: string
+    description: Numeric identifier.
+    pattern: ^[0-9]+$
+    sensitive: false
+  account_type:
+    type: string
+    description: One of the dropdown's options.
+    enum:
+    - Share Savings
+    - Share Certificate
+    - Holiday Club
+    sensitive: false
+  deposit:
+    type: decimal
+    description: Amount with up to two decimals.
+    pattern: ^[0-9]+(\.[0-9]{1,2})?$
+    sensitive: false
+  nickname:
+    type: string
+    description: ''
+    sensitive: false
+outputs:
+  confirmation_number:
+    type: string
+    parse: text
+    description: ''
+    sensitive: true
+  new_suffix:
+    type: string
+    parse: text
+    description: ''
+    sensitive: true
+outcomes:
+- MEMBER_NOT_FOUND
+- PERMISSION_DENIED
+- RECORD_NOT_FOUND
+- VALIDATION_REJECTED
+secrets:
+- MOCKBANK_PASSWORD
+- MOCKBANK_USERNAME
+steps:
+- id: s01_open_app
+  intent: Open the application entry page.
+  action: navigate
+  value: /login
+  expect: []
+  risk: safe
+  timeout_ms: 10000
+- id: s02_fill_operator_id
+  intent: Fill credentials and sign on to access member records
+  action: fill
+  target:
+    frame_path: []
+    strategies:
+    - by: role
+      role: textbox
+      name: Operator ID
+    - by: title
+      title: Operator ID
+    - by: attr
+      tag: input
+      name: username
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Operator ID"
+  value: '{{secret:MOCKBANK_USERNAME}}'
+  expect:
+  - kind: target_present
+    frame_path: []
+    any_frame: false
+    target:
+      frame_path: []
+      strategies:
+      - by: role
+        role: textbox
+        name: Password
+      - by: title
+        title: Password
+      - by: attr
+        tag: input
+        name: password
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+          > td:nth-of-type(2) > input:nth-of-type(1)
+      description: textbox "Password"
+  risk: safe
+  timeout_ms: 10000
+- id: s03_fill_password
+  intent: Enter password and sign on to access the system
+  action: fill
+  target:
+    frame_path: []
+    strategies:
+    - by: role
+      role: textbox
+      name: Password
+    - by: title
+      title: Password
+    - by: attr
+      tag: input
+      name: password
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Password"
+  value: '{{secret:MOCKBANK_PASSWORD}}'
+  expect:
+  - kind: target_present
+    frame_path: []
+    any_frame: false
+    target:
+      frame_path: []
+      strategies:
+      - by: role
+        role: button
+        name: Sign On
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(4)
+          > td:nth-of-type(1) > input:nth-of-type(1)
+      description: button "Sign On"
+  risk: safe
+  timeout_ms: 10000
+- id: s04_click_sign_on
+  intent: Click Sign On to log in and proceed to member search
+  action: click
+  target:
+    frame_path: []
+    strategies:
+    - by: role
+      role: button
+      name: Sign On
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(4)
+        > td:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Sign On"
+  expect:
+  - kind: url_matches
+    frame_path: []
+    any_frame: false
+    pattern: ^[a-z]+://[^/]+/core/main\.jsp(\?|#|$)
+  risk: safe
+  timeout_ms: 10000
+- id: s05_click_member_search
+  intent: Navigate to Member Search to find the member record
+  action: click
+  target:
+    frame_path:
+    - nav
+    strategies:
+    - by: role
+      role: link
+      name: Member Search
+    - by: text
+      text: Member Search
+    - by: css
+      selector: body:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(1)
+        > a:nth-of-type(1)
+    description: link "Member Search" in frame nav
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: ^[a-z]+://[^/]+/core/mbrsrch\.jsp(\?|#|$)
+  risk: safe
+  timeout_ms: 10000
+- id: s06_fill_member
+  intent: Enter the member ID to locate the member record.
+  action: fill
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: textbox
+      name: 'Member #'
+    - by: title
+      title: 'Member #'
+    - by: attr
+      tag: input
+      name: mbr_no
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: 'textbox "Member #" in frame main'
+  value: '{{member_id}}'
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Search
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+          > td:nth-of-type(1) > input:nth-of-type(1)
+      description: button "Search" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s07_click_search
+  intent: Click Search to retrieve member record
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: button
+      name: Search
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+        > td:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Search" in frame main
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: link
+        name: Select
+      - by: text
+        text: Select
+      - by: css
+        selector: body:nth-of-type(1) > table:nth-of-type(2) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(4)
+          > a:nth-of-type(1)
+      description: link "Select" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s08_click_select
+  intent: Select the member to open their record.
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: link
+      name: Select
+    - by: text
+      text: Select
+    - by: css
+      selector: body:nth-of-type(1) > table:nth-of-type(2) > tbody:nth-of-type(1) > tr:nth-of-type(2) > td:nth-of-type(4)
+        > a:nth-of-type(1)
+    description: link "Select" in frame main
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: ^[a-z]+://[^/]+/core/mbrdtl\.jsp(\?|#|$)
+  risk: safe
+  timeout_ms: 10000
+- id: s09_click_open_sub_account
+  intent: Click Open Sub-Account to start creating a new sub-account for the member.
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: link
+      name: Open Sub-Account
+    - by: text
+      text: Open Sub-Account
+    - by: css
+      selector: body:nth-of-type(1) > a:nth-of-type(1)
+    description: link "Open Sub-Account" in frame main
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: ^[a-z]+://[^/]+/core/opensub\.jsp(\?|#|$)
+  risk: safe
+  timeout_ms: 10000
+- id: s10_select_account_type
+  intent: Select the required sub-account type to proceed.
+  action: select
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: combobox
+      name: Account Type
+    - by: title
+      title: Account Type
+    - by: attr
+      tag: select
+      name: acct_type
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(1)
+        > td:nth-of-type(2) > select:nth-of-type(1)
+    description: combobox "Account Type" in frame main
+  value: '{{account_type}}'
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: textbox
+        name: Opening Deposit
+      - by: title
+        title: Opening Deposit
+      - by: attr
+        tag: input
+        name: deposit
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2)
+          > td:nth-of-type(2) > input:nth-of-type(1)
+      description: textbox "Opening Deposit" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s11_fill_opening_deposit
+  intent: Fill required fields and continue to create sub-account.
+  action: fill
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: textbox
+      name: Opening Deposit
+    - by: title
+      title: Opening Deposit
+    - by: attr
+      tag: input
+      name: deposit
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(2)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Opening Deposit" in frame main
+  value: '{{deposit}}'
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: textbox
+        name: Nickname
+      - by: title
+        title: Nickname
+      - by: attr
+        tag: input
+        name: nickname
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+          > td:nth-of-type(2) > input:nth-of-type(1)
+      description: textbox "Nickname" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s12_fill_nickname
+  intent: Enter the required nickname and proceed to create the sub-account.
+  action: fill
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: textbox
+      name: Nickname
+    - by: title
+      title: Nickname
+    - by: attr
+      tag: input
+      name: nickname
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3)
+        > td:nth-of-type(2) > input:nth-of-type(1)
+    description: textbox "Nickname" in frame main
+  value: '{{nickname}}'
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Continue
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(4)
+          > td:nth-of-type(1) > input:nth-of-type(1)
+      description: button "Continue" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s13_click_continue
+  intent: Click Continue to submit the new sub-account request
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: button
+      name: Continue
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(4)
+        > td:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Continue" in frame main
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Confirm
+      - by: css
+        selector: body:nth-of-type(1) > form:nth-of-type(1) > input:nth-of-type(1)
+      description: button "Confirm" in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s14_click_confirm
+  intent: Click Confirm to submit the new sub-account and reach the confirmation screen.
+  action: click
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: role
+      role: button
+      name: Confirm
+    - by: css
+      selector: body:nth-of-type(1) > form:nth-of-type(1) > input:nth-of-type(1)
+    description: button "Confirm" in frame main
+  expect:
+  - kind: url_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: ^[a-z]+://[^/]+/core/opensub_confirm\.jsp(\?|#|$)
+  risk: irreversible
+  timeout_ms: 10000
+- id: s15_extract_confirmation_number
+  intent: Extract the confirmation number and new suffix from the confirmation screen.
+  action: extract
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: table_cell
+      row_key: 'Confirmation #'
+      column_index: 2
+    description: 'cell [row "Confirmation #" x column 2] in frame main'
+  output: confirmation_number
+  expect:
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: table_cell
+        row_key: New Suffix
+        column_index: 2
+      description: cell [row "New Suffix" x column 2] in frame main
+  risk: safe
+  timeout_ms: 10000
+- id: s16_extract_new_suffix
+  intent: Extract the new account suffix from the confirmation screen.
+  action: extract
+  target:
+    frame_path:
+    - main
+    strategies:
+    - by: table_cell
+      row_key: New Suffix
+      column_index: 2
+    description: cell [row "New Suffix" x column 2] in frame main
+  output: new_suffix
+  expect: []
+  risk: safe
+  timeout_ms: 10000
+detectors:
+- id: credentials_rejected
+  class: hard_failure
+  description: Sign-on refused. Credentials are wrong or expired; retrying would risk a lockout.
+  when:
+  - kind: text_visible
+    frame_path: []
+    any_frame: false
+    pattern: Invalid operator ID or password
+  code: CREDENTIALS_REJECTED
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: session_expired
+  class: recoverable
+  description: Session timed out and the app bounced to sign-on. Sign on again by restarting the flow.
+  when:
+  - kind: url_matches
+    frame_path: []
+    any_frame: true
+    pattern: ^[a-z]+://[^/]+/login(\?|$)
+  - kind: text_visible
+    frame_path: []
+    any_frame: true
+    pattern: session has expired
+  handle: []
+  then: restart
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: app_error
+  class: hard_failure
+  description: The application returned a server error page.
+  when:
+  - kind: text_matches
+    frame_path: []
+    any_frame: true
+    pattern: HTTP 500|Internal Error|Exception
+  code: APP_ERROR
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: system_notice
+  class: recoverable
+  description: Broadcast System Notice interstitial; acknowledge it and carry on.
+  when:
+  - kind: text_visible
+    frame_path:
+    - main
+    any_frame: false
+    pattern: System Notice
+  - kind: target_present
+    frame_path:
+    - main
+    any_frame: false
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Acknowledge
+      description: ''
+  handle:
+  - action: click
+    target:
+      frame_path:
+      - main
+      strategies:
+      - by: role
+        role: button
+        name: Acknowledge
+      description: button "Acknowledge" in frame main
+  then: continue
+  max_times: 2
+  source: pack:corebank@1.1.0
+- id: permission_denied
+  class: business_outcome
+  description: The operator is not entitled to this record.
+  when:
+  - kind: text_visible
+    frame_path: []
+    any_frame: true
+    pattern: not authorized
+  code: PERMISSION_DENIED
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: member_not_found
+  class: business_outcome
+  description: The member search returned no match.
+  when:
+  - kind: text_visible
+    frame_path: []
+    any_frame: true
+    pattern: No member matches the search criteria
+  code: MEMBER_NOT_FOUND
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: record_not_found
+  class: business_outcome
+  description: A direct record lookup found nothing.
+  when:
+  - kind: text_visible
+    frame_path: []
+    any_frame: true
+    pattern: Record not found.
+  code: RECORD_NOT_FOUND
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+- id: validation_rejected
+  class: business_outcome
+  description: The app rejected the submitted values; the message says why.
+  when:
+  - kind: text_matches
+    frame_path:
+    - main
+    any_frame: false
+    pattern: (?i)(must be|is required|exceeds|select an account type|override required)
+  code: VALIDATION_REJECTED
+  handle: []
+  then: continue
+  max_times: 1
+  source: pack:corebank@1.1.0
+success:
+- kind: url_matches
+  frame_path:
+  - main
+  any_frame: false
+  pattern: ^[a-z]+://[^/]+/core/opensub_confirm\.jsp(\?|#|$)
+provenance:
+  discovery_run_id: discover-20260925T202238Z-016b90
+  recorded_at: '2026-09-25T20:23:49.991347Z'
+  provider: groq
+  model: openai/gpt-oss-120b
+  goal_template: Sign in, open the record of member {{member_id}}, open a new sub-account of type {{account_type}}
+    with an opening deposit of {{deposit}} and the nickname {{nickname}}, confirm it, and read the confirmation
+    number and the new account suffix from the confirmation screen

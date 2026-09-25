@@ -9,13 +9,16 @@ import pytest
 
 from mm.artifact import store
 from mm.evidence.recorder import RunRecorder
+from mm.policy.model import Policy
 from mm.replay.executor import replay
 from mm.replay.result import FailureKind, ReplayBusinessOutcome, ReplayFailure, ReplayResult, ReplaySuccess
 from mm.surface.web import WebSurface
 from mm.values import SecretStore
 from mock_bank import app as bank
+from tests.fakes import approval_for
 
 CAPS = Path(__file__).resolve().parent.parent / "capabilities"
+POLICY = Policy.load(CAPS.parent / "config" / "policy.yaml")
 SECRETS = SecretStore({"MOCKBANK_USERNAME": "operator1", "MOCKBANK_PASSWORD": "change-me-local-only"})
 OPEN = {"account_type": "Holiday Club", "deposit": "25.00", "nickname": "Fund"}
 
@@ -23,7 +26,8 @@ OPEN = {"account_type": "Holiday Club", "deposit": "25.00", "nickname": "Fund"}
 def _replay(bank_url: str, tmp_path: Path, cap_id: str, **inputs: str) -> ReplayResult:
     recorder = RunRecorder(tmp_path, "replay", SECRETS)
     try:
-        return replay(store.load(store.latest_path(cap_id, CAPS)), inputs, base_url=bank_url, secrets=SECRETS,
+        cap = store.load(store.latest_path(cap_id, CAPS))
+        return replay(cap, inputs, base_url=bank_url, secrets=SECRETS, policy=POLICY, approval=approval_for(cap),
                       recorder=recorder, surface_factory=lambda rec: WebSurface(headless=True))
     finally:
         recorder.close()

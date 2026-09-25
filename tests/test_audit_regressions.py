@@ -18,19 +18,21 @@ import pytest
 
 from mm.artifact import store
 from mm.evidence.recorder import RunRecorder
+from mm.policy.model import Policy
 from mm.replay.executor import replay
 from mm.replay.result import ReplayBusinessOutcome, ReplayFailure, ReplayResult, ReplaySuccess
 from mm.surface.base import ActResult
 from mm.surface.web import WebSurface
 from mm.values import SecretStore
 from mock_bank import app as bank
-from tests.fakes import FakeState, FakeSurface
+from tests.fakes import PERMISSIVE, FakeState, FakeSurface, approval_for
 
 ROOT = Path(__file__).resolve().parent.parent
 BALANCE = "corebank.member.get_savings_balance"
 OPEN = "corebank.member.open_sub_account"
 PASSWORD = "change-me-local-only"
 SECRETS = SecretStore({"MOCKBANK_USERNAME": "operator1", "MOCKBANK_PASSWORD": PASSWORD})
+POLICY = Policy.load(ROOT / "config" / "policy.yaml")
 OPEN_INPUTS = {"account_type": "Holiday Club", "deposit": "25.00", "nickname": "Fund"}
 
 
@@ -41,8 +43,9 @@ def _latest(cap_id: str) -> Path:
 def _replay(bank_url: str, tmp_path: Path, cap_id: str, **inputs: str) -> ReplayResult:
     rec = RunRecorder(tmp_path, "replay", SECRETS)
     try:
-        return replay(store.load(_latest(cap_id)), inputs, base_url=bank_url, secrets=SECRETS, recorder=rec,
-                      surface_factory=lambda _: WebSurface(headless=True))
+        cap = store.load(_latest(cap_id))
+        return replay(cap, inputs, base_url=bank_url, secrets=SECRETS, recorder=rec, policy=POLICY,
+                      approval=approval_for(cap), surface_factory=lambda _: WebSurface(headless=True))
     finally:
         rec.close()
 
@@ -115,7 +118,8 @@ def _run_fake(cap_data: dict[str, Any], state: FakeState, effects: dict[str, Any
                                      **cap_data})
     rec = RunRecorder(tmp_path, "replay", SecretStore({}))
     try:
-        return replay(cap, {}, base_url="http://a", secrets=SecretStore({}), recorder=rec,
+        return replay(cap, {}, base_url="http://a", secrets=SecretStore({}), recorder=rec, policy=PERMISSIVE,
+                      approval=approval_for(cap),
                       surface_factory=lambda _: FakeSurface(state, effects))
     finally:
         rec.close()
@@ -214,7 +218,7 @@ def test_h4_discovery_ends_cleanly_when_no_provider_answers(tmp_path: Path) -> N
     rec = RunRecorder(tmp_path, "discover", SecretStore({}))
     result = discover(goal="g", entry_url="http://a/login", inputs={}, required_outputs=[],
                       surface=FakeSurface(FakeState(), {}), router=LLMRouter([_dead_provider()]),
-                      secrets=SecretStore({}), recorder=rec, max_steps=3)
+                      secrets=SecretStore({}), recorder=rec, policy=PERMISSIVE, max_steps=3)
     rec.close()
     assert result.status == "llm_error"
 
@@ -338,7 +342,8 @@ def test_m12_interruption_flag_is_logged(tmp_path: Path) -> None:
     router = _ScriptedRouter([{"thought": "t", "action": "click", "ref": "e1", "interruption": True},
                               {"thought": "t", "action": "done", "summary": "ok"}])
     discover(goal="g", entry_url="http://a", inputs={}, required_outputs=[], surface=FakeSurface(FakeState(), {}),
-             router=router, secrets=SecretStore({}), recorder=rec, max_steps=5)  # type: ignore[arg-type]
+             router=router, secrets=SecretStore({}), recorder=rec, policy=PERMISSIVE,  # type: ignore[arg-type]
+             max_steps=5)
     rec.close()
     events = [json.loads(line) for line in next(tmp_path.glob("*/events.jsonl")).read_text().splitlines()]
     assert any(e["type"] == "decision" and e.get("interruption") is True for e in events)
@@ -350,7 +355,7 @@ def test_l2_repeated_rejected_done_counts_as_stuck(tmp_path: Path) -> None:
     router = _ScriptedRouter([{"thought": "t", "action": "done", "summary": "done"}])
     result = discover(goal="g", entry_url="http://a", inputs={}, required_outputs=["balance"],
                       surface=FakeSurface(FakeState(), {}), router=router,  # type: ignore[arg-type]
-                      secrets=SecretStore({}), recorder=rec, max_steps=20)
+                      secrets=SecretStore({}), recorder=rec, policy=PERMISSIVE, max_steps=20)
     rec.close()
     assert result.status == "stuck"
 

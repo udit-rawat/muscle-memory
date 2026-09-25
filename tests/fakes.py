@@ -67,9 +67,32 @@ class FakeSurface:
     def frame_urls(self) -> dict[str, str]:
         return {"": self.state.url}
 
+    def idle(self, ms: int) -> None:
+        pass
+
+    def drain_blocked_requests(self) -> list[str]:
+        return []
+
     def screenshot(self, path: str) -> None:
         with open(path, "wb") as fh:
             fh.write(b"")
 
     def close(self) -> None:
         pass
+
+
+# --- shared test helpers --------------------------------------------------------------------------
+
+from mm.artifact.approval import Approval  # noqa: E402
+from mm.artifact.schema import Capability  # noqa: E402
+from mm.policy.model import NetworkPolicy, Policy  # noqa: E402
+
+# For browser-free tests: any origin, no risk rules (the artifact's own risk levels still apply).
+PERMISSIVE = Policy(network=NetworkPolicy(allow_origins=["*"]))
+
+
+def approval_for(cap: Capability, by: str = "test-reviewer") -> Approval:
+    """A reviewer's sign-off covering every irreversible step of `cap` (as `mm approve` would write)."""
+    return Approval(capability_id=cap.id, version=cap.version, sha256="(in-memory)", approved_by=by,
+                    approved_at="2026-09-26T00:00:00+00:00",
+                    irreversible_steps=[s.id for s in cap.steps if s.risk == "irreversible"])

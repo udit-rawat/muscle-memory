@@ -11,7 +11,7 @@ from mm.replay.executor import replay
 from mm.replay.result import FailureKind, ReplayBusinessOutcome, ReplayFailure, ReplayResult, ReplaySuccess
 from mm.surface.base import ActResult
 from mm.values import SecretStore
-from tests.fakes import Effect, FakeState, FakeSurface
+from tests.fakes import PERMISSIVE, Effect, FakeState, FakeSurface, approval_for
 
 SECRETS = SecretStore({})
 
@@ -31,7 +31,8 @@ def _cap(steps: list[dict[str, Any]], detectors: list[dict[str, Any]] | None = N
 def _run(cap: Capability, state: FakeState, effects: dict[str, Effect], tmp_path: Path) -> ReplayResult:
     rec = RunRecorder(tmp_path, "replay", SECRETS)
     try:
-        return replay(cap, {}, base_url="http://app", secrets=SECRETS, recorder=rec,
+        return replay(cap, {}, base_url="http://app", secrets=SECRETS, recorder=rec, policy=PERMISSIVE,
+                      approval=approval_for(cap),
                       surface_factory=lambda _: FakeSurface(state, effects))
     finally:
         rec.close()

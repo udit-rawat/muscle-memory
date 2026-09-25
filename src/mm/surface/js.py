@@ -83,3 +83,27 @@ CELL_CONTEXT = r"""
 """
 
 BODY_TEXT = "() => document.body ? document.body.innerText : ''"
+
+# Returns the text of the topmost large fixed/absolute layer in this frame, or null if none.
+# "Large" = covers at least 25% of the frame's viewport; the text is taken from the layer itself or,
+# for a bare backdrop, from any other fixed layer in the frame (the dialog box sitting on it).
+BLOCKING_OVERLAY = r"""
+() => {
+  if (!document.body) return null;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const layers = Array.from(document.body.querySelectorAll('*')).filter((el) => {
+    const s = getComputedStyle(el);
+    if (s.position !== 'fixed' || s.display === 'none' || s.visibility === 'hidden') return false;
+    const r = el.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  const big = layers.find((el) => {
+    const r = el.getBoundingClientRect();
+    const w = Math.min(r.right, vw) - Math.max(r.left, 0), h = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+    return w * h >= 0.25 * vw * vh;
+  });
+  if (!big) return null;
+  const text = layers.map((el) => (el.innerText || '').trim()).filter((t) => t).join(' ');
+  return text || '(untitled overlay)';
+}
+"""

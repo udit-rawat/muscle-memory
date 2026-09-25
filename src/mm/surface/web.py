@@ -99,7 +99,7 @@ class WebSurface:
                     ref = f"e{len(elements) + 1}"
                     self._refs[ref] = (frame, handle, desc)
                     elements.append(ElementRef(ref=ref, role=desc["role"], name=desc["name"][:80],
-                                               value=desc["value"], frame_path=path))
+                                               value=desc["value"], options=desc["options"], frame_path=path))
         shot = self.page.screenshot() if with_screenshot else None
         return Observation(url=self.page.url, title=self.page.title(), elements=elements,
                            frames=frames, screenshot_png=shot)
@@ -119,7 +119,8 @@ class WebSurface:
         except PlaywrightError as exc:
             return ActResult(ok=False, detail=_first_line(exc), target=target)
         self._settle()
-        return ActResult(ok=True, target=target, extracted=extracted, frame_urls=self.frame_urls())
+        return ActResult(ok=True, target=target, extracted=extracted, options=desc["options"],
+                         frame_urls=self.frame_urls())
 
     # --- replay --------------------------------------------------------------------------------
 
@@ -145,30 +146,62 @@ class WebSurface:
                          frame_urls=self.frame_urls())
 
     def check(self, checkpoint: Checkpoint, timeout_ms: int) -> tuple[bool, str]:
+        """Poll until the condition holds or `timeout_ms` passes (0 = check once). Returns (held, observed)."""
         deadline = time.monotonic() + timeout_ms / 1000
-        observed = ""
         while True:
-            frame = self._frame(checkpoint.frame_path)
-            if frame is not None:
-                if checkpoint.kind == "url_matches":
-                    observed = frame.url
-                    if re.search(checkpoint.pattern or "", frame.url):
-                        return True, observed
-                elif checkpoint.kind == "text_visible":
-                    body = _squash(str(frame.evaluate(js.BODY_TEXT)))
-                    observed = body[:300]
-                    if (checkpoint.pattern or "") in body:
-                        return True, observed
-                elif checkpoint.kind == "target_present" and checkpoint.target is not None:
-                    loc, *_ = self._resolve(checkpoint.target, 0)
-                    observed = "present" if loc is not None else "absent"
-                    if loc is not None:
-                        return True, observed
-            else:
-                observed = f"frame {'/'.join(checkpoint.frame_path)} not found"
-            if time.monotonic() >= deadline:
-                return False, observed
+            held, observed = self._check_once(checkpoint)
+            if held or time.monotonic() >= deadline:
+                return held, observed
             self.page.wait_for_timeout(_POLL_MS)
+
+    def blocking_overlays(self) -> list[str]:
+        """Visible fixed-position layers covering a large part of a frame: modal dialogs, lightboxes.
+
+        Detectors handle the overlays we know about; any other one means the UI is in a state the
+        capability was never recorded in, and replay must not carry on underneath it.
+        """
+        found: list[str] = []
+        for frame in self.page.frames:
+            try:
+                text = frame.evaluate(js.BLOCKING_OVERLAY)
+            except PlaywrightError:
+                continue
+            if text is not None:
+                where = "/".join(frame_path(frame)) or "top"
+                found.append(f"overlay in frame {where}: {_squash(str(text))[:120]!r}")
+        return found
+
+    def _check_once(self, cp: Checkpoint) -> tuple[bool, str]:
+        frames = self.page.frames if cp.any_frame else [f for f in [self._frame(cp.frame_path)] if f]
+        if not frames:
+            return False, f"frame {'/'.join(cp.frame_path)} not found"
+        observed: list[str] = []
+        for frame in frames:
+            try:
+                if cp.kind == "url_matches":
+                    if re.search(cp.pattern or "", frame.url):
+                        return True, frame.url
+                    observed.append(frame.url)
+                elif cp.kind in ("text_visible", "text_matches"):
+                    body = str(frame.evaluate(js.BODY_TEXT))
+                    if cp.kind == "text_visible" and (cp.pattern or "") in _squash(body):
+                        line = next((ln for ln in body.splitlines() if (cp.pattern or "") in _squash(ln)), "")
+                        return True, _squash(line)[:200] or (cp.pattern or "")
+                    if cp.kind == "text_matches":
+                        for line in body.splitlines():
+                            if re.search(cp.pattern or "", line):
+                                return True, _squash(line)[:200]
+                    observed.append(_squash(body)[:150])
+                elif cp.kind == "target_present" and cp.target is not None:
+                    target = cp.target if not cp.any_frame else cp.target.model_copy(
+                        update={"frame_path": frame_path(frame)})
+                    loc, *_ = self._resolve(target, 0)
+                    if loc is not None:
+                        return True, "present"
+                    observed.append("absent")
+            except PlaywrightError as exc:  # frame navigated mid-check: treat as not (yet) holding
+                observed.append(_first_line(exc))
+        return False, " | ".join(o for o in observed if o)[:300]
 
     def frame_urls(self) -> dict[str, str]:
         return {"/".join(frame_path(f)): f.url for f in self.page.frames}

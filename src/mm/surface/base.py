@@ -82,11 +82,20 @@ class Target(BaseModel):
 
 
 class Checkpoint(BaseModel):
-    """A condition asserted after a step, so we never assume a click worked."""
+    """A condition on the current UI state. Used as a post-step checkpoint (so we never assume a click
+    worked), as a success condition, and as the trigger of a detector.
 
-    kind: Literal["url_matches", "text_visible", "target_present"]
-    frame_path: list[str] = Field(default_factory=list)
-    pattern: str | None = None  # regex for url_matches, literal text for text_visible
+    kind:
+      url_matches    regex searched in the frame's URL
+      text_visible   literal text contained in the frame's visible text
+      text_matches   regex searched in the frame's visible text (the matched line is reported)
+      target_present a Target resolves to exactly one element
+    """
+
+    kind: Literal["url_matches", "text_visible", "text_matches", "target_present"]
+    frame_path: list[str] = Field(default_factory=list, description="Frame names from the top document.")
+    any_frame: bool = Field(False, description="Hold if the condition holds in any frame (frame_path ignored).")
+    pattern: str | None = None
     target: Target | None = None  # for target_present
 
 
@@ -100,6 +109,7 @@ class ElementRef(BaseModel):
     role: str
     name: str = ""
     value: str | None = None
+    options: list[str] | None = None  # for dropdowns: the option labels
     frame_path: list[str] = Field(default_factory=list)
 
 
@@ -124,6 +134,7 @@ class ActResult(BaseModel):
     strategy_index: int | None = None  # replay: which strategy matched (>0 is a drift signal)
     attempts: list[str] = Field(default_factory=list)  # replay: per-strategy outcome when resolving
     extracted: str | None = None
+    options: list[str] | None = None  # discovery, select: the options offered at record time
     frame_urls: dict[str, str] = Field(default_factory=dict)  # "main" -> url, after the action settled
 
 
@@ -147,6 +158,7 @@ class Surface(Protocol):
         self, action: ActionType, target: Target | None, value: str | None, timeout_ms: int
     ) -> ActResult: ...
     def check(self, checkpoint: Checkpoint, timeout_ms: int) -> tuple[bool, str]: ...
+    def blocking_overlays(self) -> list[str]: ...
 
     def screenshot(self, path: str) -> None: ...
     def close(self) -> None: ...

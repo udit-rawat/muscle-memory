@@ -1,11 +1,16 @@
 """Prompt construction. Each turn is stateless (system + one user message) so token use stays flat:
 the model gets the goal, a compact history, and the current screen, never the whole transcript.
+
+Regulated values on screen (amounts, SSNs, account numbers...) are masked before they reach the model.
+It does not need them: it reads values by pointing at an element ("extract e14"), and the surface,
+not the model, does the reading.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 
+from mm.redact import mask_pii
 from mm.surface.base import Observation
 
 SYSTEM = """\
@@ -54,13 +59,13 @@ def user_message(
     lines += ["", f"SCREEN: {obs.title} | {obs.url}"]
     for f in obs.frames:
         where = "/".join(f.frame_path) or "top"
-        lines.append(f"--- frame {where} text ---\n{f.text}")
+        lines.append(f"--- frame {where} text ---\n{mask_pii(f.text)}")
     lines.append("--- elements ---")
     for e in obs.elements:
         where = f" @{'/'.join(e.frame_path)}" if e.frame_path else ""
-        val = f" value={e.value!r}" if e.value else ""
+        val = f" value={mask_pii(e.value)!r}" if e.value else ""
         opts = f" options=[{' | '.join(e.options)}]" if e.options else ""
-        lines.append(f"[{e.ref}] {e.role} \"{e.name}\"{val}{opts}{where}")
+        lines.append(f"[{e.ref}] {e.role} \"{mask_pii(e.name)}\"{val}{opts}{where}")
     if obs.truncated:
         lines.append(f"({obs.truncated} more elements not shown: the screen is larger than the observation limit)")
     return "\n".join(lines)

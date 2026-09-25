@@ -1,0 +1,77 @@
+# Detector pack for the CoreOne core-banking product (the mock bank).
+#
+# App-level knowledge of the runtime states CoreOne can be in, shared by every capability recorded
+# against it. The compiler copies these into each capability (with `source` set), so an artifact is
+# self-contained and a pack change only reaches a capability through a reviewed re-compile.
+# Order matters: first match wins.
+pack: corebank
+version: 1.0.0
+applies_to: "CoreOne >=7.4,<8"
+detectors:
+  - id: credentials_rejected
+    class: hard_failure
+    code: CREDENTIALS_REJECTED
+    description: Sign-on refused. Credentials are wrong or expired; retrying would risk a lockout.
+    when:
+      - { kind: text_visible, frame_path: [], pattern: "Invalid operator ID or password" }
+
+  - id: session_expired
+    class: recoverable
+    description: Session timed out and the app bounced to sign-on. Sign on again by restarting the flow.
+    when:
+      - { kind: url_matches, frame_path: [], pattern: "/login" }
+      - { kind: text_visible, frame_path: [], pattern: "session has expired" }
+    then: restart
+    max_times: 1
+
+  - id: app_error
+    class: hard_failure
+    code: APP_ERROR
+    description: The application returned a server error page.
+    when:
+      - { kind: text_matches, any_frame: true, pattern: "HTTP 500|Internal Error|Exception" }
+
+  - id: system_notice
+    class: recoverable
+    description: Broadcast System Notice interstitial; acknowledge it and carry on.
+    when:
+      - { kind: text_visible, frame_path: [main], pattern: "System Notice" }
+      - kind: target_present
+        frame_path: [main]
+        target: { frame_path: [main], strategies: [{ by: role, role: button, name: Acknowledge }] }
+    handle:
+      - action: click
+        target: { frame_path: [main], strategies: [{ by: role, role: button, name: Acknowledge }],
+                  description: 'button "Acknowledge" in frame main' }
+    then: continue
+    max_times: 2
+
+  - id: permission_denied
+    class: business_outcome
+    code: PERMISSION_DENIED
+    description: The operator is not entitled to this record.
+    when:
+      - { kind: text_visible, any_frame: true, pattern: "not authorized" }
+
+  - id: member_not_found
+    class: business_outcome
+    code: MEMBER_NOT_FOUND
+    description: The member search returned no match.
+    when:
+      - { kind: text_visible, any_frame: true, pattern: "No member matches the search criteria" }
+
+  - id: record_not_found
+    class: business_outcome
+    code: RECORD_NOT_FOUND
+    description: A direct record lookup found nothing.
+    when:
+      - { kind: text_visible, any_frame: true, pattern: "Record not found." }
+
+  - id: validation_rejected
+    class: business_outcome
+    code: VALIDATION_REJECTED
+    description: The app rejected the submitted values; the message says why.
+    when:
+      - kind: text_matches
+        frame_path: [main]
+        pattern: "(?i)(must be|is required|exceeds|select an account type|override required)"

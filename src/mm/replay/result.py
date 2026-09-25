@@ -19,6 +19,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field
 
+from mm.handoff.intervention import InterventionSummary
+
 
 class FailureKind(StrEnum):
     INPUT_INVALID = "INPUT_INVALID"  # rejected before touching the UI
@@ -31,6 +33,10 @@ class FailureKind(StrEnum):
     UNSAFE_TO_REPEAT = "UNSAFE_TO_REPEAT"  # recovering would re-run a step that may already have committed
     APP_UNREACHABLE = "APP_UNREACHABLE"  # the application could not be loaded at all
     INTERNAL_ERROR = "INTERNAL_ERROR"  # a bug in this system, reported as a result instead of a traceback
+    POLICY_BLOCKED = "POLICY_BLOCKED"  # outside the allowlist, or irreversible without a valid approval
+    CONTROL_LOST = "CONTROL_LOST"  # automation tried to act without holding the session's control lease
+    ESCALATION_ABORTED = "ESCALATION_ABORTED"  # the operator chose to stop the run
+    ESCALATION_TIMEOUT = "ESCALATION_TIMEOUT"  # nobody took over before the escalation timed out
     OUTPUT_MISSING = "OUTPUT_MISSING"
     OUTPUT_UNPARSEABLE = "OUTPUT_UNPARSEABLE"
     SUCCESS_CHECK_FAILED = "SUCCESS_CHECK_FAILED"
@@ -55,8 +61,10 @@ class _Base(BaseModel):
     capability_id: str
     capability_version: str
     run_id: str
+    approved_by: str | None = None  # who signed off this artifact version, if anyone
     steps: list[StepTrace] = Field(default_factory=list)
     recoveries: list[Recovery] = Field(default_factory=list)
+    interventions: list[InterventionSummary] = Field(default_factory=list)
 
 
 class ReplaySuccess(_Base):

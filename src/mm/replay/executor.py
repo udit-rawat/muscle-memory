@@ -13,6 +13,12 @@ Same artifact + same inputs + same app state -> same steps, same outputs. For ea
 If a step fails outright (target missing, click intercepted), detectors get the first say too:
 "no Select link" after a search is MEMBER_NOT_FOUND, not TARGET_NOT_FOUND.
 
+Every action goes through GuardedSurface (allowlist, action types, control lease). An irreversible step
+runs only under a valid approval that names it, and only inside an authorised window (the browser also
+blocks commit requests outside that window). If a human operator is available, an unrecoverable
+state becomes an intervention request instead of a failure: the operator takes control of this same
+live session, fixes it, hands control back, and replay re-verifies the screen before carrying on.
+
 A non-safe step (mutating/irreversible) is performed at most once. Once its action has been
 dispatched, whether or not it reported success, no recovery may redo it or restart the flow past it:
 that is UNSAFE_TO_REPEAT, because repeating a commit is worse than stopping.
@@ -28,8 +34,13 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 from urllib.parse import urljoin
 
+from mm.artifact.approval import Approval
 from mm.artifact.schema import Capability, Detector, OutputSpec, Step
 from mm.evidence.recorder import RunRecorder
+from mm.handoff.intervention import HandoffController, Kind, Status
+from mm.handoff.lease import ControlLease
+from mm.policy.guard import GuardedSurface
+from mm.policy.model import Policy, stricter
 from mm.redact import mask_value
 from mm.replay.result import (
     FailureKind,
@@ -45,6 +56,11 @@ from mm.values import SecretStore, render
 
 _POLL_S = 0.15
 _MAX_STEP_ATTEMPTS = 3
+_MAX_ESCALATIONS = 3
+# Failures a human operator can plausibly fix in the live session. Business outcomes never escalate
+# (they are answers), nor do input errors, policy refusals or an unreachable app.
+_ESCALATABLE = {FailureKind.UNEXPECTED_STATE, FailureKind.TARGET_NOT_FOUND, FailureKind.CHECKPOINT_FAILED,
+                FailureKind.ACTION_FAILED, FailureKind.RECOVERY_EXHAUSTED}
 _RECOVERY_ACTION: dict[str, Literal["handled", "retried_step", "restarted"]] = {
     "continue": "handled", "retry_step": "retried_step", "restart": "restarted"}
 
@@ -92,8 +108,16 @@ def replay(
     surface_factory: Callable[[RunRecorder], Surface],
     secrets: SecretStore,
     recorder: RunRecorder,
+    policy: Policy,
+    approval: Approval | None = None,
+    approval_problem: str = "capability has no approval",
+    handoff: HandoffController | None = None,
+    escalation_timeout_s: float = 600,
 ) -> ReplayResult:
-    base: dict[str, Any] = {"capability_id": cap.id, "capability_version": cap.version, "run_id": recorder.run_id}
+    """`approval`: a valid sign-off for this exact artifact (see artifact/approval.py), required for any
+    irreversible step. `handoff`: if given, unrecoverable states are escalated to a human operator."""
+    base: dict[str, Any] = {"capability_id": cap.id, "capability_version": cap.version, "run_id": recorder.run_id,
+                            "approved_by": approval.approved_by if approval else None}
     recorder.event("replay_start", capability=cap.id, version=cap.version, status=cap.status, base_url=base_url,
                    inputs={k: (mask_value(v) if cap.inputs[k].sensitive else v)
                            for k, v in params.items() if k in cap.inputs})
@@ -103,11 +127,19 @@ def replay(
         result = ReplayFailure(**base, kind=FailureKind.INPUT_INVALID, step_id=None, message="; ".join(problems))
         recorder.event("replay_end", **_loggable(result))
         return result
+    if cap.status == "deprecated":
+        result = ReplayFailure(**base, kind=FailureKind.POLICY_BLOCKED, step_id=None,
+                               message=f"{cap.id} {cap.version} is deprecated")
+        recorder.event("replay_end", **_loggable(result))
+        return result
 
-    surface = surface_factory(recorder)
+    lease = handoff.lease if handoff else ControlLease()
+    surface = GuardedSurface(surface_factory(recorder), policy, lease)
     try:
-        result = _Replay(cap, params, base_url, surface, secrets, recorder, base).run()
+        result = _Replay(cap, params, base_url, surface, secrets, recorder, base, approval, approval_problem,
+                         handoff, escalation_timeout_s).run()
     finally:
+        lease.end("replay finished")
         surface.close()
     if isinstance(result, ReplayFailure) and recorder.trace_path.exists():  # tracing is opt-in
         result.trace = str(recorder.trace_path)
@@ -116,10 +148,15 @@ def replay(
 
 
 class _Replay:
-    def __init__(self, cap: Capability, params: Mapping[str, str], base_url: str, surface: Surface,
-                 secrets: SecretStore, recorder: RunRecorder, base: dict[str, Any]) -> None:
+    def __init__(self, cap: Capability, params: Mapping[str, str], base_url: str, surface: GuardedSurface,
+                 secrets: SecretStore, recorder: RunRecorder, base: dict[str, Any], approval: Approval | None,
+                 approval_problem: str, handoff: HandoffController | None, escalation_timeout_s: float) -> None:
         self.cap, self.params, self.base_url = cap, params, base_url
         self.surface, self.secrets, self.rec, self.base = surface, secrets, recorder, base
+        self.approval, self.approval_problem = approval, approval_problem
+        self.handoff, self.escalation_timeout_s = handoff, escalation_timeout_s
+        self.escalations = 0
+        self.dispatched_non_safe: set[str] = set()
         self.outputs: dict[str, str] = {}
         self.traces: list[StepTrace] = []
         self.drift: list[str] = []
@@ -134,14 +171,20 @@ class _Replay:
         try:
             i = 0
             while i < len(self.cap.steps):
-                step_id = self.cap.steps[i].id
+                step = self.cap.steps[i]
+                step_id = step.id
                 try:
-                    self._step(self.cap.steps[i])
+                    self._step(step)
                     i += 1
                 except _Restart:
                     self.rec.event("restart", from_step=step_id)
                     self.outputs.clear()
                     i = 0
+                except _Stop as stop:
+                    if not self._can_escalate(stop.result):
+                        raise
+                    if self._escalate(step, stop.result) == "next":
+                        i += 1
             return self._finish()
         except _Stop as stop:
             return stop.result
@@ -159,7 +202,7 @@ class _Replay:
                 return self._failure(FailureKind.SUCCESS_CHECK_FAILED, None, "success condition not met",
                                      expected=f"{cp.kind} {cp.pattern}", observed=observed)
         return ReplaySuccess(**self.base, steps=self.traces, recoveries=self.recoveries,
-                             outputs=self.outputs, drift=self.drift)
+                             interventions=self._interventions(), outputs=self.outputs, drift=self.drift)
 
     # --- one step ------------------------------------------------------------------------------
 
@@ -169,7 +212,14 @@ class _Replay:
             value = render(step.value, self.params, self.secrets) if step.value else None
             if step.action is ActionType.NAVIGATE and value:
                 value = urljoin(self.base_url.rstrip("/") + "/", value.lstrip("/"))
-            res = self.surface.perform(step.action, step.target, value, step.timeout_ms)
+            # The artifact's risk, or the current policy's reading of the control, whichever is stricter.
+            risk = stricter(step.risk, self.surface.risk_of(step.action, target=step.target))
+            if risk == "irreversible":
+                self._require_approval(step)
+                with self.surface.irreversible_authorized():
+                    res = self.surface.perform(step.action, step.target, value, step.timeout_ms)
+            else:
+                res = self.surface.perform(step.action, step.target, value, step.timeout_ms)
             by = (step.target.strategies[res.strategy_index].by
                   if step.target and res.strategy_index is not None else None)
             self.traces.append(StepTrace(step_id=step.id, ok=res.ok, strategy=by, strategy_index=res.strategy_index,
@@ -178,12 +228,19 @@ class _Replay:
                            strategy=by, strategy_index=res.strategy_index, detail=res.detail, attempts=res.attempts,
                            extracted=mask_value(res.extracted) if res.extracted else None)
 
-            dispatched = res.ok or res.error == "action_failed"
-            if dispatched and step.risk != "safe":
+            dispatched = res.ok or res.error == "action_failed" or res.dispatched is True
+            if dispatched and risk != "safe":
                 self.committed = True  # it may have taken effect even if it reported an error
+                self.dispatched_non_safe.add(step.id)
 
             if not res.ok:
                 desc = step.target.description if step.target else step.value
+                if res.error == "policy_blocked":
+                    raise _Stop(self._failure(FailureKind.POLICY_BLOCKED, step.id, f"{step.action} on {desc} refused",
+                                              expected="an action inside the safety policy", observed=res.detail))
+                if res.error == "control_not_held":
+                    raise _Stop(self._failure(FailureKind.CONTROL_LOST, step.id, "automation does not hold the session",
+                                              observed=res.detail))
                 if res.error == "navigation_failed":
                     raise _Stop(self._failure(FailureKind.APP_UNREACHABLE, step.id, f"could not load {value}",
                                               expected="the application to respond", observed=res.detail))
@@ -255,6 +312,7 @@ class _Replay:
         if det.class_ == "business_outcome":
             shot = self._screenshot(f"outcome-{step.id}")
             raise _Stop(ReplayBusinessOutcome(**self.base, steps=self.traces, recoveries=self.recoveries,
+                                              interventions=self._interventions(),
                                               code=det.code or "", message=observed or det.description,
                                               detector_id=det.id, step_id=step.id, screenshot=shot))
         if det.class_ == "hard_failure":
@@ -303,6 +361,55 @@ class _Replay:
                 return det, observed
         return None
 
+    # --- approval and escalation ---------------------------------------------------------------
+
+    def _require_approval(self, step: Step) -> None:
+        if self.approval is not None and step.id in self.approval.irreversible_steps:
+            self.rec.event("irreversible_authorized", step_id=step.id, approved_by=self.approval.approved_by)
+            return
+        why = self.approval_problem if self.approval is None else f"the approval does not cover {step.id}"
+        raise _Stop(self._failure(FailureKind.POLICY_BLOCKED, step.id,
+                                  f"{step.id} is irreversible and needs an approval: {why}",
+                                  expected=f"a valid approval of {self.cap.id} {self.cap.version} naming {step.id}",
+                                  observed=why, committed=self.committed))
+
+    def _can_escalate(self, result: ReplayResult) -> bool:
+        return (self.handoff is not None and isinstance(result, ReplayFailure) and result.kind in _ESCALATABLE
+                and self.escalations < _MAX_ESCALATIONS)
+
+    def _escalate(self, step: Step, failure: ReplayResult) -> Literal["next", "retry"]:
+        """Hand the live session to a human, wait, then re-verify before automation continues."""
+        assert self.handoff is not None and isinstance(failure, ReplayFailure)
+        self.escalations += 1
+        item = self.handoff.open(
+            Kind.UNRECOVERABLE_STATE, subject=f"{self.cap.id} {self.cap.version}", reason=failure.message,
+            step_id=step.id, expected=failure.expected, observed=failure.observed, screenshot=failure.screenshot,
+            suggested=[f"Bring the application to the state after: {step.intent}", "Then hand control back (Resume)",
+                       "Or Abort if the run should stop"])
+        final = self.handoff.wait(item.id, idle=self.surface.idle, timeout_s=self.escalation_timeout_s)
+        if final.status is Status.ABORTED:
+            raise _Stop(self._failure(FailureKind.ESCALATION_ABORTED, step.id, f"operator aborted: {final.note}",
+                                      observed=failure.message))
+        if final.status is not Status.RESOLVED:
+            raise _Stop(self._failure(FailureKind.ESCALATION_TIMEOUT, step.id, "no operator took over in time",
+                                      observed=failure.message))
+        # Control is back. Never assume what the human did: look at the screen again first.
+        if overlays := self.surface.blocking_overlays():
+            raise _Stop(self._failure(FailureKind.UNEXPECTED_STATE, step.id, "still blocked after the handoff",
+                                      observed="; ".join(overlays)))
+        done = bool(step.expect) and all(self.surface.check(cp, 2_000)[0] for cp in step.expect)
+        if not done and step.id in self.dispatched_non_safe:
+            raise _Stop(self._failure(FailureKind.UNSAFE_TO_REPEAT, step.id,
+                                      f"after the handoff {step.id} is not complete, and it may already have "
+                                      "taken effect: not repeating it", committed=True))
+        self.surface.resync()  # automation takes the session back only after re-verifying it
+        self.rec.event("handoff_resumed", intervention=item.id, step_id=step.id,
+                       continue_from="next step" if done else "same step")
+        return "next" if done else "retry"
+
+    def _interventions(self) -> list[Any]:
+        return list(self.handoff.summaries()) if self.handoff else []
+
     def _refuse_repeat(self, step: Step, dispatched: bool, what: str) -> None:
         if dispatched and step.risk != "safe":
             raise _Stop(self._failure(
@@ -326,7 +433,8 @@ class _Replay:
                  expected: str | None = None, observed: str | None = None,
                  committed: bool | None = None) -> ReplayFailure:
         shot = self._screenshot(f"failure-{step_id or 'run'}")
-        return ReplayFailure(**self.base, steps=self.traces, recoveries=self.recoveries, kind=kind, code=code,
+        return ReplayFailure(**self.base, steps=self.traces, recoveries=self.recoveries,
+                             interventions=self._interventions(), kind=kind, code=code,
                              step_id=step_id, message=message, expected=expected, observed=observed,
                              screenshot=shot, may_have_committed=self.committed if committed is None else committed)
 

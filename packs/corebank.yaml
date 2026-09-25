@@ -5,7 +5,7 @@
 # self-contained and a pack change only reaches a capability through a reviewed re-compile.
 # Order matters: first match wins.
 pack: corebank
-version: 1.0.0
+version: 1.1.0
 applies_to: "CoreOne >=7.4,<8"
 detectors:
   - id: credentials_rejected
@@ -18,9 +18,10 @@ detectors:
   - id: session_expired
     class: recoverable
     description: Session timed out and the app bounced to sign-on. Sign on again by restarting the flow.
+    # any_frame: mid-flow, the sign-on page loads inside the content frame, not at the top.
     when:
-      - { kind: url_matches, frame_path: [], pattern: "/login" }
-      - { kind: text_visible, frame_path: [], pattern: "session has expired" }
+      - { kind: url_matches, any_frame: true, pattern: "^[a-z]+://[^/]+/login(\\?|$)" }
+      - { kind: text_visible, any_frame: true, pattern: "session has expired" }
     then: restart
     max_times: 1
 

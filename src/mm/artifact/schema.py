@@ -135,7 +135,9 @@ class Capability(BaseModel):
     schema_version: str = SCHEMA_VERSION
     id: str = Field(description="Dotted name, e.g. corebank.member.get_savings_balance")
     version: str = "0.1.0"
-    status: Literal["draft", "approved", "deprecated"] = "draft"
+    status: Literal["draft", "deprecated"] = Field(
+        "draft", description="deprecated capabilities never replay. Approval is not a status: it is a separate "
+                             "sign-off bound to this file's bytes (see artifact/approval.py).")
     summary: str
     app: AppRef
     inputs: dict[str, InputSpec] = Field(default_factory=dict)

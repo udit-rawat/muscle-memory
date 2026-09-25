@@ -32,15 +32,13 @@ from mm.artifact.schema import (
     Risk,
     Step,
 )
-from mm.surface.base import ActionType, Checkpoint, Target
+from mm.policy.model import Policy
+from mm.surface.base import ActionType, Checkpoint, RoleStrategy, Target, TextStrategy
 from mm.values import parameterize, referenced
 
 _CURRENCY = re.compile(r"^-?\$?\s?[\d,]+\.\d{2}$")
 _DECIMAL = re.compile(r"^\d+\.\d{1,2}$")
 _PLACEHOLDER = re.compile(r"^\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}$")
-# Controls whose activation commits something. Phase 3 moves this rule into the policy file.
-_IRREVERSIBLE = re.compile(
-    r"(?i)\b(confirm|post|transfer|delete|close account|approve|disburse|submit payment)\b")
 
 
 class CompileError(ValueError):
@@ -49,11 +47,15 @@ class CompileError(ValueError):
 
 def compile_run(
     run: DiscoveryResult, cap_id: str, summary: str | None = None, pack: str | None = None,
-    packs_dir: Path = Path("packs"), version: str = "0.1.0",
+    packs_dir: Path = Path("packs"), version: str = "0.1.0", policy: Policy | None = None,
 ) -> Capability:
     """`pack`: detector pack name; None = the capability id's app prefix; "none" = deliberately no pack."""
     if run.status != "success":
         raise CompileError(f"only successful runs compile into capabilities (run status: {run.status})")
+    if run.human_took_control:
+        raise CompileError("a human took control during this run; steps they performed are not recorded as "
+                           "replayable steps yet, so the result would be incomplete. Re-record it unassisted.")
+    policy = policy or Policy.load()
     entry_path = _relative(run.entry_url)
     flow = [r for r in run.steps if not r.interruption]
     for rec in flow:
@@ -72,7 +74,7 @@ def compile_run(
             value=rec.value_template,
             output=rec.output,
             expect=_checkpoints(rec, nxt),
-            risk=_risk(rec),
+            risk=_risk(rec, policy),
         ))
 
     pack_name = pack if pack is not None else cap_id.split(".")[0]
@@ -137,10 +139,17 @@ def _checkpoints(rec: RecordedStep, nxt: RecordedStep | None) -> list[Checkpoint
     return checks
 
 
-def _risk(rec: RecordedStep) -> Risk:
-    if rec.action is ActionType.CLICK and rec.target is not None and _IRREVERSIBLE.search(rec.target.description):
-        return "irreversible"
-    return "safe"
+def _risk(rec: RecordedStep, policy: Policy) -> Risk:
+    """From the safety policy, judged on the control's accessible name (what the operator reads on it)."""
+    if rec.target is None:
+        return "safe"
+    names = [s.name for s in rec.target.strategies if isinstance(s, RoleStrategy)]
+    names += [s.text for s in rec.target.strategies if isinstance(s, TextStrategy)]
+    risk: Risk = "safe"
+    for name in names or [rec.target.description]:
+        if policy.classify_control(rec.action, name) == "irreversible":
+            risk = "irreversible"
+    return risk
 
 
 def _learned_detectors(run: DiscoveryResult, existing: list[Detector]) -> list[Detector]:

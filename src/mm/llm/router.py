@@ -21,8 +21,13 @@ log = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-# Errors worth failing over on. Anything else (bad request, auth) is a bug and should surface.
-_FAILOVER_ERRORS = (RateLimitError, APIConnectionError)
+
+class LLMUnavailable(RuntimeError):
+    """No provider produced a valid answer. `errors` holds one line per provider, for the run log."""
+
+    def __init__(self, errors: list[str]) -> None:
+        super().__init__("no LLM provider produced a valid answer: " + " | ".join(errors))
+        self.errors = errors
 
 
 @dataclass(frozen=True)
@@ -73,8 +78,12 @@ class LLMRouter:
         """Validated `response_model` from the first provider that answers.
 
         On a validation error Instructor re-asks the same provider with the error, up to `max_retries`.
+        Instructor wraps every failure in its own exception, so the decision is made on the root cause:
+        availability problems (rate limit, connection, timeout, 5xx) and exhausted validation retries fail
+        over to the next provider; configuration errors (401/403/400/404) are raised at once, because the
+        next provider would only hide a broken setup. Raises LLMUnavailable when every provider failed.
         """
-        last_exc: Exception | None = None
+        errors: list[str] = []
         for p in self.providers:
             try:
                 result, completion = p.client.chat.completions.create_with_completion(
@@ -88,17 +97,25 @@ class LLMRouter:
                 usage = getattr(completion, "usage", None)
                 return LLMCall(result, p.name, p.model,
                                getattr(usage, "prompt_tokens", 0) or 0, getattr(usage, "completion_tokens", 0) or 0)
-            except _FAILOVER_ERRORS as exc:
-                log.warning("provider %s unavailable (%s); failing over", p.name, type(exc).__name__)
-                last_exc = exc
-            except APIStatusError as exc:
-                if exc.status_code >= 500:
-                    log.warning("provider %s returned %s; failing over", p.name, exc.status_code)
-                    last_exc = exc
-                    continue
-                raise
-        assert last_exc is not None
-        raise last_exc
+            except Exception as exc:  # noqa: BLE001 — classified below, re-raised when not recoverable
+                cause = _root_cause(exc)
+                if isinstance(cause, APIStatusError) and not isinstance(cause, RateLimitError) \
+                        and cause.status_code < 500:
+                    raise cause from exc
+                errors.append(f"{p.name}: {type(cause).__name__}: {str(cause)[:160]}")
+                log.warning("provider %s failed (%s); trying the next one", p.name, type(cause).__name__)
+        raise LLMUnavailable(errors)
+
+
+def _root_cause(exc: BaseException) -> BaseException:
+    """Walk past wrapper exceptions (Instructor's retry exception) to the error that actually happened."""
+    seen = {id(exc)}
+    while True:
+        nxt = exc.__cause__ or exc.__context__
+        if nxt is None or id(nxt) in seen or isinstance(exc, (APIConnectionError, APIStatusError)):
+            return exc
+        seen.add(id(nxt))
+        exc = nxt
 
 
 def _real_key(secret: SecretStr | None) -> str | None:

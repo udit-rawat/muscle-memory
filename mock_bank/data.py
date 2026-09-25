@@ -43,6 +43,10 @@ _SEED: dict[str, Member] = {
         Member("12011", "Riley", "Fakerson", "Hill Valley", "0004", restricted=True, accounts=[
             Account("S00", "savings", "Share Savings", Decimal("98000.55")),
         ]),
+        # No savings account at all: a read of "the savings balance" has no right answer here.
+        Member("13100", "Morgan", "Nosavings", "Riverton", "0005", accounts=[
+            Account("S10", "checking", "Everyday Checking", Decimal("777.77")),
+        ]),
     ]
 }
 

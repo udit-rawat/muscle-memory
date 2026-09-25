@@ -31,7 +31,10 @@ USERNAME = os.getenv("MOCKBANK_USERNAME", "operator1")
 PASSWORD = os.getenv("MOCKBANK_PASSWORD", "change-me-local-only")
 SESSION_TTL_S = int(os.getenv("MOCKBANK_SESSION_TTL", "900"))
 
-VALID_FAULTS = {"slow", "notice", "survey", "session_expired", "permission", "error500"}
+# session_expired fires on the next in-app request; the _on_* variants fire mid-flow on one page.
+EXPIRY_FAULTS = {"session_expired": None, "session_expired_on_detail": "/core/mbrdtl.jsp",
+                 "session_expired_on_confirm": "/core/opensub_confirm.jsp"}
+VALID_FAULTS = {"slow", "notice", "survey", "permission", "error500", *EXPIRY_FAULTS}
 FAULTS: set[str] = {f for f in os.getenv("MOCKBANK_FAULTS", "").split(",") if f in VALID_FAULTS}
 
 app = FastAPI(title="CoreOne (mock)", docs_url=None, redoc_url=None)
@@ -56,8 +59,9 @@ def _authed(request: Request) -> bool:
     last = request.session.get("last_seen")
     if not request.session.get("user") or last is None:
         return False
-    if "session_expired" in FAULTS or time.time() - last > SESSION_TTL_S:
-        FAULTS.discard("session_expired")  # one-shot: expires the current session once
+    fired = [f for f, path in EXPIRY_FAULTS.items() if f in FAULTS and path in (None, request.url.path)]
+    if fired or time.time() - last > SESSION_TTL_S:
+        FAULTS.difference_update(fired)  # one-shot: expires the current session once
         request.session.clear()
         return False
     request.session["last_seen"] = time.time()

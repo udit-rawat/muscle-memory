@@ -26,4 +26,12 @@
   <a href="/core/mbrdtl.jsp?m={{ member.member_no }}&ack=1"><button type="button">Acknowledge</button></a></td></tr></table>
 </div>
 {% endif %}
+{% if show_survey %}
+<div class="modal-bg"></div>
+<div class="modal">
+  <table width="100%"><tr><td class="hdr">Quick Survey</td></tr>
+  <tr><td><br>How satisfied are you with CoreOne today?<br><br>
+  <a href="/core/mbrdtl.jsp?m={{ member.member_no }}&ack=1"><button type="button">Maybe Later</button></a></td></tr></table>
+</div>
+{% endif %}
 </body></html>

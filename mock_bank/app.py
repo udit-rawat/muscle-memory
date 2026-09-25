@@ -2,8 +2,8 @@
 
 Deliberately "legacy": server-rendered, a <frameset> shell, table layouts, no ids or test ids,
 form posts with full page reloads. Runtime faults can be injected so replay has real
-exceptional states to detect: slow loads, a System Notice interstitial, session expiry,
-permission denial, and HTTP 500.
+exceptional states to detect: slow loads, a System Notice interstitial (known to the detector
+pack), a survey pop-up (deliberately unknown to it), session expiry, permission denial, HTTP 500.
 
 Run it:  uv run uvicorn mock_bank.app:app --port 8600
 Faults:  MOCKBANK_FAULTS=notice,slow  or  POST /__control/faults {"faults": ["notice"]}
@@ -31,7 +31,7 @@ USERNAME = os.getenv("MOCKBANK_USERNAME", "operator1")
 PASSWORD = os.getenv("MOCKBANK_PASSWORD", "change-me-local-only")
 SESSION_TTL_S = int(os.getenv("MOCKBANK_SESSION_TTL", "900"))
 
-VALID_FAULTS = {"slow", "notice", "session_expired", "permission", "error500"}
+VALID_FAULTS = {"slow", "notice", "survey", "session_expired", "permission", "error500"}
 FAULTS: set[str] = {f for f in os.getenv("MOCKBANK_FAULTS", "").split(",") if f in VALID_FAULTS}
 
 app = FastAPI(title="CoreOne (mock)", docs_url=None, redoc_url=None)
@@ -158,7 +158,8 @@ def member_detail(request: Request, m: str = "", ack: int = 0) -> Response:
         return _render(request, "message.html", status_code=403, heading="Member Inquiry",
                        message="You are not authorized to view this member record. (SEC-041)")
     show_notice = "notice" in FAULTS and not ack
-    return _render(request, "detail.html", member=member, show_notice=show_notice)
+    show_survey = "survey" in FAULTS and not ack
+    return _render(request, "detail.html", member=member, show_notice=show_notice, show_survey=show_survey)
 
 
 # --- open sub-account: form → review → confirm (irreversible) --------------------------------

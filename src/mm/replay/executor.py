@@ -12,6 +12,10 @@ Same artifact + same inputs + same app state -> same steps, same outputs. For ea
 
 If a step fails outright (target missing, click intercepted), detectors get the first say too:
 "no Select link" after a search is MEMBER_NOT_FOUND, not TARGET_NOT_FOUND.
+
+A non-safe step (mutating/irreversible) is performed at most once. Once its action has been
+dispatched, whether or not it reported success, no recovery may redo it or restart the flow past it:
+that is UNSAFE_TO_REPEAT, because repeating a commit is worse than stopping.
 """
 
 from __future__ import annotations
@@ -105,7 +109,7 @@ def replay(
         result = _Replay(cap, params, base_url, surface, secrets, recorder, base).run()
     finally:
         surface.close()
-    if isinstance(result, ReplayFailure):
+    if isinstance(result, ReplayFailure) and recorder.trace_path.exists():  # tracing is opt-in
         result.trace = str(recorder.trace_path)
     recorder.event("replay_end", **_loggable(result))
     return result
@@ -126,19 +130,25 @@ class _Replay:
     # --- top level -----------------------------------------------------------------------------
 
     def run(self) -> ReplayResult:
+        step_id: str | None = None
         try:
             i = 0
             while i < len(self.cap.steps):
+                step_id = self.cap.steps[i].id
                 try:
                     self._step(self.cap.steps[i])
                     i += 1
                 except _Restart:
-                    self.rec.event("restart", from_step=self.cap.steps[i].id)
+                    self.rec.event("restart", from_step=step_id)
                     self.outputs.clear()
                     i = 0
             return self._finish()
         except _Stop as stop:
             return stop.result
+        except Exception as exc:  # noqa: BLE001 — the caller gets a result, never a traceback
+            self.rec.event("internal_error", step_id=step_id, error=f"{type(exc).__name__}: {exc}")
+            return self._failure(FailureKind.INTERNAL_ERROR, step_id, f"{type(exc).__name__}: {str(exc)[:300]}",
+                                 committed=self.committed)
 
     def _finish(self) -> ReplayResult:
         if missing := sorted(self.cap.outputs.keys() - self.outputs.keys()):
@@ -168,31 +178,40 @@ class _Replay:
                            strategy=by, strategy_index=res.strategy_index, detail=res.detail, attempts=res.attempts,
                            extracted=mask_value(res.extracted) if res.extracted else None)
 
+            dispatched = res.ok or res.error == "action_failed"
+            if dispatched and step.risk != "safe":
+                self.committed = True  # it may have taken effect even if it reported an error
+
             if not res.ok:
+                desc = step.target.description if step.target else step.value
+                if res.error == "navigation_failed":
+                    raise _Stop(self._failure(FailureKind.APP_UNREACHABLE, step.id, f"could not load {value}",
+                                              expected="the application to respond", observed=res.detail))
                 # The page may be in a known exceptional state; detectors get the first say.
                 if self._react(step) == "none":
                     self._fail_if_unrecognised_overlay(step)
-                    desc = step.target.description if step.target else step.value
-                    if res.detail == "target not found":
+                    if res.error == "not_found":
                         raise _Stop(self._failure(FailureKind.TARGET_NOT_FOUND, step.id, f"could not find {desc}",
                                                   expected=_strategies(step), observed="; ".join(res.attempts)))
                     raise _Stop(self._failure(FailureKind.ACTION_FAILED, step.id, f"{step.action} on {desc} failed",
                                               expected=step.intent, observed=res.detail))
-                continue  # a recoverable condition was handled; redo the action
+                self._refuse_repeat(step, dispatched, "redo the step after a recovery")
+                continue  # a recoverable condition was handled and nothing was dispatched; redo the action
 
-            if step.risk != "safe":
-                self.committed = True
             if res.strategy_index:
                 self.drift.append(f"{step.id}: matched by fallback strategy #{res.strategy_index} ({by})")
             if step.action is ActionType.EXTRACT and step.output:
+                self.rec.taint(res.extracted)  # a value read from the app never appears unmasked in the log
                 spec = self.cap.outputs[step.output]
                 try:
                     self.outputs[step.output] = _parse(res.extracted or "", spec)
+                    self.rec.taint(self.outputs[step.output])
                 except OutputParseError as exc:
                     raise _Stop(self._failure(FailureKind.OUTPUT_UNPARSEABLE, step.id, str(exc),
                                               expected=spec.parse, observed=mask_value(res.extracted))) from exc
 
             if self._await(step) == "retry":
+                self._refuse_repeat(step, True, "retry the step")
                 continue
             return
         raise _Stop(self._failure(FailureKind.RECOVERY_EXHAUSTED, step.id,
@@ -250,10 +269,10 @@ class _Replay:
                                       f"{det.id} recurred more than {det.max_times} time(s)",
                                       expected=f"at most {det.max_times} recoveries", observed=det.description))
         if det.then == "restart" and self.committed:
-            raise _Stop(self._failure(FailureKind.RESTART_UNSAFE, step.id,
-                                      f"{det.id} requires restarting the flow, but a non-safe step already ran",
-                                      expected="restart only before any state-changing step",
-                                      observed=det.description))
+            raise _Stop(self._failure(FailureKind.UNSAFE_TO_REPEAT, step.id,
+                                      f"{det.id} requires restarting the flow, but a non-safe step may already "
+                                      "have taken effect", expected="restart only before any state-changing step",
+                                      observed=det.description, committed=True))
         for h in det.handle:
             value = render(h.value, self.params, self.secrets) if h.value else None
             res = self.surface.perform(h.action, h.target, value, 5_000)
@@ -284,6 +303,14 @@ class _Replay:
                 return det, observed
         return None
 
+    def _refuse_repeat(self, step: Step, dispatched: bool, what: str) -> None:
+        if dispatched and step.risk != "safe":
+            raise _Stop(self._failure(
+                FailureKind.UNSAFE_TO_REPEAT, step.id,
+                f"recovery wants to {what}, but {step.id} is {step.risk} and was already dispatched",
+                expected=f"{step.id} performed at most once", observed="a recoverable condition after dispatch",
+                committed=True))
+
     def _fail_if_unrecognised_overlay(self, step: Step) -> None:
         """Nothing we don't understand may be covering the UI when we move on."""
         overlays = self.surface.blocking_overlays()
@@ -296,15 +323,19 @@ class _Replay:
     # --- helpers -------------------------------------------------------------------------------
 
     def _failure(self, kind: FailureKind, step_id: str | None, message: str, *, code: str | None = None,
-                 expected: str | None = None, observed: str | None = None) -> ReplayFailure:
+                 expected: str | None = None, observed: str | None = None,
+                 committed: bool | None = None) -> ReplayFailure:
         shot = self._screenshot(f"failure-{step_id or 'run'}")
         return ReplayFailure(**self.base, steps=self.traces, recoveries=self.recoveries, kind=kind, code=code,
                              step_id=step_id, message=message, expected=expected, observed=observed,
-                             screenshot=shot)
+                             screenshot=shot, may_have_committed=self.committed if committed is None else committed)
 
-    def _screenshot(self, name: str) -> str:
+    def _screenshot(self, name: str) -> str | None:
         path = self.rec.screenshot_path(name)
-        self.surface.screenshot(str(path))
+        try:
+            self.surface.screenshot(str(path))
+        except Exception:  # noqa: BLE001 — a dead browser must not turn a failure report into a crash
+            return None
         return str(path)
 
 

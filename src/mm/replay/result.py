@@ -28,7 +28,9 @@ class FailureKind(StrEnum):
     UNEXPECTED_STATE = "UNEXPECTED_STATE"  # something unrecognised (e.g. an unknown dialog) blocks the UI
     APP_ERROR = "APP_ERROR"  # a hard_failure detector fired (the detector's code is in `code`)
     RECOVERY_EXHAUSTED = "RECOVERY_EXHAUSTED"  # a recoverable condition kept coming back past its bound
-    RESTART_UNSAFE = "RESTART_UNSAFE"  # a restart was needed after a non-safe step had already run
+    UNSAFE_TO_REPEAT = "UNSAFE_TO_REPEAT"  # recovering would re-run a step that may already have committed
+    APP_UNREACHABLE = "APP_UNREACHABLE"  # the application could not be loaded at all
+    INTERNAL_ERROR = "INTERNAL_ERROR"  # a bug in this system, reported as a result instead of a traceback
     OUTPUT_MISSING = "OUTPUT_MISSING"
     OUTPUT_UNPARSEABLE = "OUTPUT_UNPARSEABLE"
     SUCCESS_CHECK_FAILED = "SUCCESS_CHECK_FAILED"
@@ -82,6 +84,8 @@ class ReplayFailure(_Base):
     observed: str | None = None
     screenshot: str | None = None
     trace: str | None = None
+    may_have_committed: bool = Field(False, description="A non-safe step was dispatched before the failure: "
+                                                        "check the application before retrying the capability.")
 
 
 ReplayResult = Annotated[ReplaySuccess | ReplayBusinessOutcome | ReplayFailure, Field(discriminator="status")]

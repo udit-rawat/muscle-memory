@@ -1,0 +1,53 @@
+GOAL: Sign in, open the record of member 10234, open a new sub-account of type Holiday Club with an opening deposit of 25.00 and the nickname Holiday Fund, confirm it, and read the confirmation number and the new account suffix from the confirmation screen
+
+INPUTS (type as placeholders): {{member_id}}=10234, {{account_type}}=Holiday Club, {{deposit}}=25.00, {{nickname}}=Holiday Fund
+SECRETS available: {{secret:MOCKBANK_PASSWORD}}, {{secret:MOCKBANK_USERNAME}}
+OUTPUTS required: confirmation_number, new_suffix
+
+HISTORY:
+5. fill textbox "Member #" '{{member_id}}' -> ok
+6. click button "Search" -> ok
+7. click link "Select" -> ok
+8. click link "Open Sub-Account" -> ok
+9. select combobox "Account Type" '{{account_type}}' -> ok
+10. fill textbox "Opening Deposit" '{{deposit}}' -> ok
+11. fill textbox "Nickname" '{{nickname}}' -> ok
+12. click button "Continue" -> ok
+
+SCREEN: CoreOne 7.4.2 | http://127.0.0.1:8600/core/main.jsp
+--- frame banner text ---
+Pinecrest Federal Credit Union — CoreOne 7.4.2 Operator: [REDACTED]   Sign Off
+--- frame nav text ---
+Functions
+Home
+Member Search
+Teller Drawer
+GL Inquiry
+Reports
+--- frame main text ---
+Review — Open Sub-Account
+Member 10234 Avery Testperson
+Account Type Holiday Club
+Opening Deposit $**.00
+Nickname Holiday Fund
+Please verify the details. Posting cannot be reversed from this screen.
+ Back
+--- elements ---
+[e1] link "Sign Off" @banner
+[e2] cell "Pinecrest Federal Credit Union — CoreOne 7.4.2" @banner
+[e3] link "Home" @nav
+[e4] link "Member Search" @nav
+[e5] cell "Teller Drawer" @nav
+[e6] cell "GL Inquiry" @nav
+[e7] cell "Reports" @nav
+[e8] button "Confirm" @main
+[e9] link "Back" @main
+[e10] cell "Review — Open Sub-Account" @main
+[e11] cell "Member" @main
+[e12] cell "10234 Avery Testperson" @main
+[e13] cell "Account Type" @main
+[e14] cell "Holiday Club" @main
+[e15] cell "Opening Deposit" @main
+[e16] cell "$**.00" @main
+[e17] cell "Nickname" @main
+[e18] cell "Holiday Fund" @main

@@ -1,0 +1,86 @@
+{
+  "capability_id": "corebank.member.get_savings_balance",
+  "capability_version": "0.3.0",
+  "run_id": "replay-20260926T183252Z-d42ad9",
+  "approved_by": null,
+  "steps": [
+    {
+      "step_id": "s01_open_app",
+      "ok": true,
+      "strategy": null,
+      "strategy_index": null,
+      "duration_ms": 287
+    },
+    {
+      "step_id": "s02_fill_operator_id",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 317
+    },
+    {
+      "step_id": "s03_fill_password",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 314
+    },
+    {
+      "step_id": "s04_click_sign_on",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 315
+    },
+    {
+      "step_id": "s05_click_member_search",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 339
+    },
+    {
+      "step_id": "s06_fill_member",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 278
+    },
+    {
+      "step_id": "s07_click_search",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 283
+    },
+    {
+      "step_id": "s08_click_select",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 295
+    },
+    {
+      "step_id": "s09_extract_savings_balance",
+      "ok": true,
+      "strategy": "table_cell",
+      "strategy_index": 0,
+      "duration_ms": 274
+    }
+  ],
+  "recoveries": [
+    {
+      "detector_id": "learned_click_maybe_later",
+      "step_id": "s08_click_select",
+      "action": "handled",
+      "detail": "Seen during discovery and dismissed by the agent: Dismiss the blocking Quick Survey overlay"
+    }
+  ],
+  "interventions": [],
+  "status": "success",
+  "outputs": {
+    "savings_balance": "*****.00"
+  },
+  "drift": [],
+  "_note": "outputs masked for evidence; the caller receives the actual values"
+}

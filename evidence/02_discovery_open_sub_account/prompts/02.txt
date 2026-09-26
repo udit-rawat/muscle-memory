@@ -1,0 +1,24 @@
+GOAL: Sign in, open the record of member 10234, open a new sub-account of type Holiday Club with an opening deposit of 25.00 and the nickname Holiday Fund, confirm it, and read the confirmation number and the new account suffix from the confirmation screen
+
+INPUTS (type as placeholders): {{member_id}}=10234, {{account_type}}=Holiday Club, {{deposit}}=25.00, {{nickname}}=Holiday Fund
+SECRETS available: {{secret:MOCKBANK_PASSWORD}}, {{secret:MOCKBANK_USERNAME}}
+OUTPUTS required: confirmation_number, new_suffix
+INPUTS not yet entered: {{member_id}}, {{account_type}}, {{deposit}}, {{nickname}}
+
+HISTORY:
+1. fill textbox "Operator ID" '{{secret:MOCKBANK_USERNAME}}' -> ok
+
+SCREEN: CoreOne 7.4.2 - Sign On | http://127.0.0.1:8600/login
+--- frame top text ---
+Pinecrest Federal Credit Union — CoreOne 7.4.2
+Operator Sign On
+Operator ID 
+Password 
+Authorized use only. Activity is monitored.
+--- elements ---
+[e1] textbox "Operator ID" value='[REDACTED]'
+[e2] textbox "Password"
+[e3] button "Sign On"
+[e4] cell "Pinecrest Federal Credit Union — CoreOne 7.4.2"
+[e5] cell "Operator ID"
+[e6] cell "Password"

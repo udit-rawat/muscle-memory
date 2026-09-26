@@ -1,0 +1,48 @@
+{
+  "capability_id": "corebank.member.get_savings_balance",
+  "capability_version": "0.3.0",
+  "run_id": "replay-20260926T183256Z-1b01b8",
+  "approved_by": null,
+  "steps": [
+    {
+      "step_id": "s01_open_app",
+      "ok": true,
+      "strategy": null,
+      "strategy_index": null,
+      "duration_ms": 281
+    },
+    {
+      "step_id": "s02_fill_operator_id",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 319
+    },
+    {
+      "step_id": "s03_fill_password",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 306
+    },
+    {
+      "step_id": "s04_click_sign_on",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 319
+    }
+  ],
+  "recoveries": [],
+  "interventions": [],
+  "status": "failure",
+  "kind": "APP_ERROR",
+  "code": "APP_ERROR",
+  "step_id": "s04_click_sign_on",
+  "message": "The application returned a server error page.",
+  "expected": "no error state",
+  "observed": "HTTP 500 \u2013 Internal Error",
+  "screenshot": "screenshots/failure-s04_click_sign_on.png",
+  "trace": null,
+  "may_have_committed": false
+}

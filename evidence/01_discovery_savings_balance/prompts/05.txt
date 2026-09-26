@@ -1,0 +1,41 @@
+GOAL: Sign in, look up member 10234 and read their current Share Savings balance
+
+INPUTS (type as placeholders): {{member_id}}=10234
+SECRETS available: {{secret:MOCKBANK_PASSWORD}}, {{secret:MOCKBANK_USERNAME}}
+OUTPUTS required: savings_balance
+INPUTS not yet entered: {{member_id}}
+
+HISTORY:
+1. fill textbox "Operator ID" '{{secret:MOCKBANK_USERNAME}}' -> ok
+2. fill textbox "Password" '{{secret:MOCKBANK_PASSWORD}}' -> ok
+3. click button "Sign On" -> ok
+4. click link "Member Search" -> ok
+
+SCREEN: CoreOne 7.4.2 | http://127.0.0.1:8600/core/main.jsp
+--- frame banner text ---
+Pinecrest Federal Credit Union — CoreOne 7.4.2 Operator: [REDACTED]   Sign Off
+--- frame nav text ---
+Functions
+Home
+Member Search
+Teller Drawer
+GL Inquiry
+Reports
+--- frame main text ---
+Member Search
+Member # 
+Last Name
+--- elements ---
+[e1] link "Sign Off" @banner
+[e2] cell "Pinecrest Federal Credit Union — CoreOne 7.4.2" @banner
+[e3] link "Home" @nav
+[e4] link "Member Search" @nav
+[e5] cell "Teller Drawer" @nav
+[e6] cell "GL Inquiry" @nav
+[e7] cell "Reports" @nav
+[e8] textbox "Member #" @main
+[e9] textbox "Last Name" @main
+[e10] button "Search" @main
+[e11] cell "Member Search" @main
+[e12] cell "Member #" @main
+[e13] cell "Last Name" @main

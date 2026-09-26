@@ -1,0 +1,129 @@
+{
+  "capability_id": "corebank.member.open_sub_account",
+  "capability_version": "0.3.0",
+  "run_id": "replay-20260926T183317Z-148220",
+  "approved_by": "udit",
+  "steps": [
+    {
+      "step_id": "s01_open_app",
+      "ok": true,
+      "strategy": null,
+      "strategy_index": null,
+      "duration_ms": 279
+    },
+    {
+      "step_id": "s02_fill_operator_id",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 319
+    },
+    {
+      "step_id": "s03_fill_password",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 314
+    },
+    {
+      "step_id": "s04_click_sign_on",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 309
+    },
+    {
+      "step_id": "s05_click_member_search",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 327
+    },
+    {
+      "step_id": "s06_fill_member",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 296
+    },
+    {
+      "step_id": "s07_click_search",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 292
+    },
+    {
+      "step_id": "s08_click_select",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 288
+    },
+    {
+      "step_id": "s09_click_open_sub_account",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 302
+    },
+    {
+      "step_id": "s10_select_account_type",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 279
+    },
+    {
+      "step_id": "s11_fill_opening_deposit",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 274
+    },
+    {
+      "step_id": "s12_fill_nickname",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 274
+    },
+    {
+      "step_id": "s13_click_continue",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 288
+    },
+    {
+      "step_id": "s14_click_confirm",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 283
+    },
+    {
+      "step_id": "s15_extract_confirmation_number",
+      "ok": true,
+      "strategy": "table_cell",
+      "strategy_index": 0,
+      "duration_ms": 283
+    },
+    {
+      "step_id": "s16_extract_new_suffix",
+      "ok": true,
+      "strategy": "table_cell",
+      "strategy_index": 0,
+      "duration_ms": 268
+    }
+  ],
+  "recoveries": [],
+  "interventions": [],
+  "status": "success",
+  "outputs": {
+    "confirmation_number": "*******83",
+    "new_suffix": "*22"
+  },
+  "drift": [],
+  "_note": "outputs masked for evidence; the caller receives the actual values"
+}

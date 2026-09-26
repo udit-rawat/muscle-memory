@@ -1,0 +1,25 @@
+GOAL: Sign in, look up member 10234 and read their current Share Savings balance
+
+INPUTS (type as placeholders): {{member_id}}=10234
+SECRETS available: {{secret:MOCKBANK_PASSWORD}}, {{secret:MOCKBANK_USERNAME}}
+OUTPUTS required: savings_balance
+INPUTS not yet entered: {{member_id}}
+
+HISTORY:
+1. fill textbox "Operator ID" '{{secret:MOCKBANK_USERNAME}}' -> ok
+2. fill textbox "Password" '{{secret:MOCKBANK_PASSWORD}}' -> ok
+
+SCREEN: CoreOne 7.4.2 - Sign On | http://127.0.0.1:8600/login
+--- frame top text ---
+Pinecrest Federal Credit Union — CoreOne 7.4.2
+Operator Sign On
+Operator ID 
+Password 
+Authorized use only. Activity is monitored.
+--- elements ---
+[e1] textbox "Operator ID" value='[REDACTED]'
+[e2] textbox "Password"
+[e3] button "Sign On"
+[e4] cell "Pinecrest Federal Credit Union — CoreOne 7.4.2"
+[e5] cell "Operator ID"
+[e6] cell "Password"

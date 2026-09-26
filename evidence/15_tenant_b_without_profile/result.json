@@ -1,0 +1,55 @@
+{
+  "capability_id": "corebank.member.get_savings_balance",
+  "capability_version": "0.3.0",
+  "run_id": "replay-20260926T183335Z-1b857d",
+  "approved_by": null,
+  "steps": [
+    {
+      "step_id": "s01_open_app",
+      "ok": true,
+      "strategy": null,
+      "strategy_index": null,
+      "duration_ms": 278
+    },
+    {
+      "step_id": "s02_fill_operator_id",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 310
+    },
+    {
+      "step_id": "s03_fill_password",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 305
+    },
+    {
+      "step_id": "s04_click_sign_on",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 319
+    },
+    {
+      "step_id": "s05_click_member_search",
+      "ok": false,
+      "strategy": null,
+      "strategy_index": null,
+      "duration_ms": 10069
+    }
+  ],
+  "recoveries": [],
+  "interventions": [],
+  "status": "failure",
+  "kind": "TARGET_NOT_FOUND",
+  "code": null,
+  "step_id": "s05_click_member_search",
+  "message": "could not find link \"Member Search\" in frame nav",
+  "expected": "role: {\"role\":\"link\",\"name\":\"Member Search\"} | text: {\"text\":\"Member Search\"} | css: {\"selector\":\"body:nth-of-type(1) > table:nth-of-type(1) > tbody:nth-of-type(1) > tr:nth-of-type(3) > td:nth-of-type(1) > a:nth-of-type(1)\"}",
+  "observed": "role: 0 matches; text: 0 matches; css: matched 'Dashboard', not the expected ['member search']: refused",
+  "screenshot": "screenshots/failure-s05_click_member_search.png",
+  "trace": null,
+  "may_have_committed": false
+}

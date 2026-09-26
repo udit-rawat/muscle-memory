@@ -1,0 +1,19 @@
+{
+  "capability_id": "corebank.member.get_savings_balance",
+  "capability_version": "0.3.0",
+  "run_id": "replay-20260926T183312Z-260bea",
+  "approved_by": null,
+  "steps": [],
+  "recoveries": [],
+  "interventions": [],
+  "status": "failure",
+  "kind": "INPUT_INVALID",
+  "code": null,
+  "step_id": null,
+  "message": "input 'member_id' does not match ^[0-9]+$",
+  "expected": null,
+  "observed": null,
+  "screenshot": null,
+  "trace": null,
+  "may_have_committed": false
+}

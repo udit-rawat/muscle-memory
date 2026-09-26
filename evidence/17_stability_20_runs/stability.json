@@ -1,0 +1,112 @@
+{
+  "summary": {
+    "capability": "corebank.member.get_savings_balance 0.3.0",
+    "runs": 20,
+    "success": 20,
+    "with_drift": 0,
+    "step_ms_min": 2648,
+    "step_ms_max": 2707
+  },
+  "runs": [
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2648
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2665
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2668
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2707
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2684
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2705
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2657
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2670
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2680
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2651
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2692
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2675
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2675
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2668
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2692
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2694
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2650
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2677
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2659
+    },
+    {
+      "status": "success",
+      "drift": [],
+      "ms": 2705
+    }
+  ]
+}

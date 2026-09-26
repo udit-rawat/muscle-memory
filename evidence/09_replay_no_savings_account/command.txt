@@ -1,0 +1,1 @@
+mm replay capabilities/corebank.member.get_savings_balance/0.3.0.yaml -p member_id=13100 --base-url http://127.0.0.1:61617 --headless

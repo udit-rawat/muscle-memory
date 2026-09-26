@@ -1,0 +1,2 @@
+# mock bank faults: survey
+mm replay capabilities/corebank.member.open_sub_account/0.3.0.yaml -p member_id=10871 -p "account_type=Holiday Club" -p deposit=25 -p nickname=Fund --simulate-operator "click:Maybe Later" --base-url http://127.0.0.1:61617 --headless

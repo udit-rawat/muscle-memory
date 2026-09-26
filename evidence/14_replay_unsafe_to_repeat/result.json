@@ -1,0 +1,111 @@
+{
+  "capability_id": "corebank.member.open_sub_account",
+  "capability_version": "0.3.0",
+  "run_id": "replay-20260926T183330Z-273b47",
+  "approved_by": "udit",
+  "steps": [
+    {
+      "step_id": "s01_open_app",
+      "ok": true,
+      "strategy": null,
+      "strategy_index": null,
+      "duration_ms": 283
+    },
+    {
+      "step_id": "s02_fill_operator_id",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 306
+    },
+    {
+      "step_id": "s03_fill_password",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 316
+    },
+    {
+      "step_id": "s04_click_sign_on",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 318
+    },
+    {
+      "step_id": "s05_click_member_search",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 318
+    },
+    {
+      "step_id": "s06_fill_member",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 293
+    },
+    {
+      "step_id": "s07_click_search",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 282
+    },
+    {
+      "step_id": "s08_click_select",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 287
+    },
+    {
+      "step_id": "s09_click_open_sub_account",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 307
+    },
+    {
+      "step_id": "s10_select_account_type",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 286
+    },
+    {
+      "step_id": "s11_fill_opening_deposit",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 275
+    },
+    {
+      "step_id": "s12_fill_nickname",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 273
+    },
+    {
+      "step_id": "s13_click_continue",
+      "ok": true,
+      "strategy": "role",
+      "strategy_index": 0,
+      "duration_ms": 279
+    }
+  ],
+  "recoveries": [],
+  "interventions": [],
+  "status": "failure",
+  "kind": "UNSAFE_TO_REPEAT",
+  "code": null,
+  "step_id": "s13_click_continue",
+  "message": "session_expired requires restarting the flow, but a non-safe step may already have taken effect",
+  "expected": "restart only before any state-changing step",
+  "observed": "Session timed out and the app bounced to sign-on. Sign on again by restarting the flow.",
+  "screenshot": "screenshots/failure-s13_click_continue.png",
+  "trace": null,
+  "may_have_committed": true
+}

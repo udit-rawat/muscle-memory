@@ -1,0 +1,63 @@
+GOAL: Sign in, look up member 10234 and read their current Share Savings balance
+
+INPUTS (type as placeholders): {{member_id}}=10234
+SECRETS available: {{secret:MOCKBANK_PASSWORD}}, {{secret:MOCKBANK_USERNAME}}
+OUTPUTS required: savings_balance
+
+HISTORY:
+1. fill textbox "Operator ID" '{{secret:MOCKBANK_USERNAME}}' -> ok
+2. fill textbox "Password" '{{secret:MOCKBANK_PASSWORD}}' -> ok
+3. click button "Sign On" -> ok
+4. click link "Member Search" -> ok
+5. fill textbox "Member #" '{{member_id}}' -> ok
+6. click button "Search" -> ok
+7. click link "Select" -> ok
+8. click button "Maybe Later" -> ok
+
+SCREEN: CoreOne 7.4.2 | http://127.0.0.1:8600/core/main.jsp
+--- frame banner text ---
+Pinecrest Federal Credit Union — CoreOne 7.4.2 Operator: [REDACTED]   Sign Off
+--- frame nav text ---
+Functions
+Home
+Member Search
+Teller Drawer
+GL Inquiry
+Reports
+--- frame main text ---
+Member Summary
+Member # 10234
+Name Avery Testperson
+City Springfield
+SSN ***-**-0001
+Suffix Type Description Balance
+S00 SAVINGS Share Savings $*,***.17
+S10 CHECKING Everyday Checking $***.40
+Open Sub-Account  |  New Search
+--- elements ---
+[e1] link "Sign Off" @banner
+[e2] cell "Pinecrest Federal Credit Union — CoreOne 7.4.2" @banner
+[e3] link "Home" @nav
+[e4] link "Member Search" @nav
+[e5] cell "Teller Drawer" @nav
+[e6] cell "GL Inquiry" @nav
+[e7] cell "Reports" @nav
+[e8] link "Open Sub-Account" @main
+[e9] link "New Search" @main
+[e10] cell "Member Summary" @main
+[e11] cell "Member #" @main
+[e12] cell "10234" @main
+[e13] cell "Name" @main
+[e14] cell "Avery Testperson" @main
+[e15] cell "City" @main
+[e16] cell "Springfield" @main
+[e17] cell "SSN" @main
+[e18] cell "***-**-0001" @main
+[e19] cell "S00" @main
+[e20] cell "SAVINGS" @main
+[e21] cell "Share Savings" @main
+[e22] cell "$*,***.17" @main
+[e23] cell "S10" @main
+[e24] cell "CHECKING" @main
+[e25] cell "Everyday Checking" @main
+[e26] cell "$***.40" @main

@@ -1,0 +1,69 @@
+GOAL: Sign in, look up member 10234 and read their current Share Savings balance
+
+INPUTS (type as placeholders): {{member_id}}=10234
+SECRETS available: {{secret:MOCKBANK_PASSWORD}}, {{secret:MOCKBANK_USERNAME}}
+OUTPUTS required: savings_balance
+BLOCKING OVERLAY on screen: overlay in frame main: 'Quick Survey\nHow satisfied are you with CoreOne today?\nMaybe Later'. Dismiss it first (click, interruption=true).
+
+HISTORY:
+1. fill textbox "Operator ID" '{{secret:MOCKBANK_USERNAME}}' -> ok
+2. fill textbox "Password" '{{secret:MOCKBANK_PASSWORD}}' -> ok
+3. click button "Sign On" -> ok
+4. click link "Member Search" -> ok
+5. fill textbox "Member #" '{{member_id}}' -> ok
+6. click button "Search" -> ok
+7. click link "Select" -> ok
+
+SCREEN: CoreOne 7.4.2 | http://127.0.0.1:8600/core/main.jsp
+--- frame banner text ---
+Pinecrest Federal Credit Union — CoreOne 7.4.2 Operator: [REDACTED]   Sign Off
+--- frame nav text ---
+Functions
+Home
+Member Search
+Teller Drawer
+GL Inquiry
+Reports
+--- frame main text ---
+Member Summary
+Member # 10234
+Name Avery Testperson
+City Springfield
+SSN ***-**-0001
+Suffix Type Description Balance
+S00 SAVINGS Share Savings $*,***.17
+S10 CHECKING Everyday Checking $***.40
+Open Sub-Account  |  New Search
+Quick Survey
+How satisfied are you with CoreOne today?
+Maybe Later
+--- elements ---
+[e1] link "Sign Off" @banner
+[e2] cell "Pinecrest Federal Credit Union — CoreOne 7.4.2" @banner
+[e3] link "Home" @nav
+[e4] link "Member Search" @nav
+[e5] cell "Teller Drawer" @nav
+[e6] cell "GL Inquiry" @nav
+[e7] cell "Reports" @nav
+[e8] link "Open Sub-Account" @main
+[e9] link "New Search" @main
+[e10] link "Maybe Later" @main
+[e11] button "Maybe Later" @main
+[e12] cell "Member Summary" @main
+[e13] cell "Member #" @main
+[e14] cell "10234" @main
+[e15] cell "Name" @main
+[e16] cell "Avery Testperson" @main
+[e17] cell "City" @main
+[e18] cell "Springfield" @main
+[e19] cell "SSN" @main
+[e20] cell "***-**-0001" @main
+[e21] cell "S00" @main
+[e22] cell "SAVINGS" @main
+[e23] cell "Share Savings" @main
+[e24] cell "$*,***.17" @main
+[e25] cell "S10" @main
+[e26] cell "CHECKING" @main
+[e27] cell "Everyday Checking" @main
+[e28] cell "$***.40" @main
+[e29] cell "Quick Survey" @main

@@ -10,13 +10,14 @@ strategy must match exactly one element (ambiguity is a miss, never a guess).
 
 from __future__ import annotations
 
+import contextlib
 import re
 import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from playwright.sync_api import ElementHandle, Frame, Locator, Page, Route, sync_playwright
+from playwright.sync_api import ElementHandle, FloatRect, Frame, Locator, Page, Route, sync_playwright
 from playwright.sync_api import Error as PlaywrightError
 
 from mm.redact import PII_ANY
@@ -65,6 +66,7 @@ class WebSurface:
         slow_mo_ms: int = 0,
         request_policy: RequestPolicy | None = None,
         on_human_action: Callable[[dict[str, Any]], None] | None = None,
+        mask_texts: list[str] | None = None,
     ) -> None:
         """request_policy: consulted for every request any frame makes; refused requests are aborted in
         the browser before they leave it. on_human_action: receives clicks/changes made in the page."""
@@ -75,6 +77,7 @@ class WebSurface:
         if trace_path:
             self._context.tracing.start(screenshots=True, snapshots=True)
         self._request_policy = request_policy
+        self._mask_texts = [t for t in (mask_texts or []) if t]  # credentials: never visible in evidence images
         self._blocked: list[str] = []
         self.irreversible_window = False  # set only while an approved irreversible step is being performed
         if request_policy is not None:
@@ -101,10 +104,26 @@ class WebSurface:
             self._pw.stop()
 
     def screenshot(self, path: str) -> None:
-        """Evidence screenshot with PII-looking text (amounts, SSNs, account numbers) blacked out."""
-        masks = [f.get_by_text(PII_ANY) for f in self._live_frames()]
-        masks += [f.locator("input[type=password]") for f in self._live_frames()]
-        self.page.screenshot(path=path, mask=masks, mask_color="#000")
+        """Evidence screenshot with PII-looking text, credentials and password fields blacked out."""
+        self.page.screenshot(path=path, mask=self.screenshot_masks(), mask_color="#000")
+
+    def masked_png(self, clip: FloatRect | None = None) -> bytes:
+        """The same masking as `screenshot`, returned as PNG bytes (optionally clipped to a region)."""
+        return self.page.screenshot(mask=self.screenshot_masks(), mask_color="#000", clip=clip)
+
+    def screenshot_masks(self) -> list[Locator]:
+        masks: list[Locator] = []
+        for f in self._live_frames():
+            masks.append(f.get_by_text(PII_ANY))
+            masks.append(f.locator("input[type=password]"))
+            for text in self._mask_texts:
+                masks.append(f.get_by_text(text))  # e.g. "Operator: operator1" in a banner
+            inputs = f.locator("input")
+            for i in range(inputs.count()):  # a credential typed into an ordinary text field
+                with contextlib.suppress(PlaywrightError):
+                    if inputs.nth(i).input_value(timeout=500) in self._mask_texts:
+                        masks.append(inputs.nth(i))
+        return masks
 
     def idle(self, ms: int) -> None:
         self.page.wait_for_timeout(ms)

@@ -1,0 +1,6 @@
+# Pinecrest Federal Credit Union: CoreOne 7.4.2 with the vendor's default vocabulary.
+# The capabilities in capabilities/ were recorded on this tenant, so it needs no overrides.
+tenant: tenant_a
+app: corebank
+product_version: "7.4.2"
+labels: {}

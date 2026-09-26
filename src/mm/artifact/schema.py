@@ -121,6 +121,7 @@ class AppRef(BaseModel):
 
     name: str
     entry_path: str = Field(description="Path relative to the tenant's base URL, e.g. /login")
+    tenant: str | None = Field(None, description="Set when specialised for one tenant (see artifact/tenancy.py).")
 
 
 class Provenance(BaseModel):
@@ -128,6 +129,7 @@ class Provenance(BaseModel):
     recorded_at: datetime
     provider: str
     model: str
+    recorded_on: str | None = Field(None, description="The tenant the discovery run was recorded on.")
     goal_template: str = Field(description="The discovery goal with input values replaced by placeholders.")
 
 

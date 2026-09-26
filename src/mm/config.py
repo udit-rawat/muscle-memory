@@ -37,8 +37,9 @@ class Settings(BaseSettings):
     mm_policy_path: Path = PROJECT_ROOT / "config" / "policy.yaml"
     mm_packs_dir: Path = PROJECT_ROOT / "packs"
     mm_capabilities_dir: Path = PROJECT_ROOT / "capabilities"
+    mm_tenants_dir: Path = PROJECT_ROOT / "tenants"
 
-    @field_validator("mm_runs_dir", "mm_policy_path", "mm_packs_dir", "mm_capabilities_dir")
+    @field_validator("mm_runs_dir", "mm_policy_path", "mm_packs_dir", "mm_capabilities_dir", "mm_tenants_dir")
     @classmethod
     def _from_project_root(cls, path: Path) -> Path:
         """A relative path in .env means relative to the project, not to wherever `mm` was started."""

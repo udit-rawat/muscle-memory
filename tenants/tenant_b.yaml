@@ -1,0 +1,24 @@
+# Harborview Community CU: the same CoreOne product (7.5.0), configured with its own vocabulary and
+# a different menu order. Everything recorded on tenant_a is reused here through this profile; nothing
+# is re-recorded. A capability specialised for this tenant is a different capability for review
+# purposes: its irreversible steps need their own approval (`mm approve ... --tenant tenant_b`).
+tenant: tenant_b
+app: corebank
+product_version: "7.5.0"
+
+# Exact renames of what the operator reads on screen, applied to every capability of this app
+# (locator names, visible texts, titles, table row keys and headers, checkpoint and detector text).
+labels:
+  Member Search: Find Member
+  "Member #": Account Holder ID
+  Search: Go
+  Share Savings: Primary Savings
+  Open Sub-Account: Add Share Account
+  Home: Dashboard
+  Last Name: Surname
+
+# Structural differences a rename cannot express, per capability and step (none needed for tenant_b):
+#   steps:
+#     corebank.member.get_savings_balance:
+#       s09_extract_savings_balance: { timeout_ms: 20000 }
+steps: {}

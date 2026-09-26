@@ -24,7 +24,8 @@ class SimulatedOperator:
     console_url: str
     page: Page
     clicks: list[str] = field(default_factory=list)  # button/link names to click once in control
-    decision: str = "approve"  # for approval requests: approve | reject | abort
+    decision: str = "reject"  # for approval requests: approve | reject | abort. Never approves unless told to.
+    token: str = ""  # the console's per-run token
     abort: bool = False  # for takeover requests: abort instead of fixing
     _done: set[str] = field(default_factory=set)
 
@@ -46,7 +47,7 @@ class SimulatedOperator:
 
     def _call(self, item_id: str, action: str, note: str = "") -> None:
         r = httpx.post(f"{self.console_url}/api/interventions/{item_id}/{action}", json={"by": WHO, "note": note},
-                       timeout=10)
+                       headers={"X-Operator-Token": self.token}, timeout=10)
         r.raise_for_status()
 
     def _click(self, name: str) -> None:

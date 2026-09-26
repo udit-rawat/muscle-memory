@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from mm.evidence.recorder import RunRecorder
 from mm.handoff.lease import ControlLease, LeaseState, Owner
+from mm.redact import mask_pii
 
 
 class Kind(StrEnum):
@@ -93,10 +94,9 @@ class HandoffController:
     """Owns the lease and the interventions of one run. The operator console calls into it from its own
     thread; the run calls `open` and `wait` from the browser thread."""
 
-    def __init__(self, recorder: RunRecorder, lease: ControlLease | None = None) -> None:
+    def __init__(self, recorder: RunRecorder) -> None:
         self.rec = recorder
-        self.lease = lease or ControlLease()
-        self.lease._on_change = self._lease_changed
+        self.lease = ControlLease(on_change=self._lease_changed)
         self._lock = threading.Lock()
         self._items: dict[str, Intervention] = {}
         self.operator_tick: Callable[[Intervention], None] | None = None  # a simulated operator, if any
@@ -104,8 +104,10 @@ class HandoffController:
     # --- raised by the run ---------------------------------------------------------------------
 
     def open(self, kind: Kind, subject: str, reason: str, **fields: Any) -> Intervention:
+        clean = {k: self._clean(v) if k in ("expected", "observed", "page_excerpt") and isinstance(v, str) else v
+                 for k, v in fields.items()}
         item = Intervention(id=f"iv-{uuid4().hex[:8]}", run_id=self.rec.run_id, kind=kind, subject=subject,
-                            reason=reason, created_at=_now(), **fields)
+                            reason=self._clean(reason), created_at=_now(), **clean)
         with self._lock:
             self._items[item.id] = item
         self._persist(item, "intervention_opened")
@@ -159,8 +161,8 @@ class HandoffController:
         if self.lease.state.owner is not Owner.HUMAN:
             return
         action = HumanAction(at=_now(), kind=str(payload.get("kind", "")), tag=str(payload.get("tag", "")),
-                             name=self.rec.scrub(str(payload.get("name", "")))[:80],
-                             frame=str(payload.get("frame", "")), detail=self.rec.scrub(str(payload.get("detail", ""))))
+                             name=self._clean(str(payload.get("name", "")))[:80],
+                             frame=str(payload.get("frame", "")), detail=self._clean(str(payload.get("detail", ""))))
         with self._lock:
             claimed = [i for i in self._items.values() if i.status is Status.CLAIMED]
             if not claimed:
@@ -212,6 +214,9 @@ class HandoffController:
         if event:
             self.rec.event(event, intervention=item.id, kind=item.kind, status=item.status, step_id=item.step_id,
                            by=item.resolved_by or item.claimed_by)
+
+    def _clean(self, text: str) -> str:
+        return self.rec.scrub(mask_pii(text))
 
     def _lease_changed(self, state: LeaseState) -> None:
         self.rec.event("lease", owner=state.owner, epoch=state.epoch, holder=state.holder, reason=state.reason)

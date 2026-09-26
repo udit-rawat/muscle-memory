@@ -54,7 +54,7 @@ class ControlLease:
         return self._transfer({Owner.AGENT}, Owner.HUMAN, holder, reason)
 
     def to_agent(self, reason: str) -> LeaseState:
-        return self._transfer({Owner.HUMAN, Owner.AGENT}, Owner.AGENT, "automation", reason)
+        return self._transfer({Owner.HUMAN}, Owner.AGENT, "automation", reason)
 
     def end(self, reason: str) -> LeaseState:
         return self._transfer(set(Owner), Owner.NONE, "nobody", reason)

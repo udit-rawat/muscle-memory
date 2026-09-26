@@ -33,6 +33,7 @@ SESSION_TTL_S = int(os.getenv("MOCKBANK_SESSION_TTL", "900"))
 
 # session_expired fires on the next in-app request; the _on_* variants fire mid-flow on one page.
 EXPIRY_FAULTS = {"session_expired": None, "session_expired_on_detail": "/core/mbrdtl.jsp",
+                 "session_expired_on_submit": "POST /core/opensub.jsp",  # the Continue that creates a pending request
                  "session_expired_on_confirm": "/core/opensub_confirm.jsp"}
 VALID_FAULTS = {"slow", "notice", "survey", "permission", "error500", *EXPIRY_FAULTS}
 FAULTS: set[str] = {f for f in os.getenv("MOCKBANK_FAULTS", "").split(",") if f in VALID_FAULTS}
@@ -59,7 +60,8 @@ def _authed(request: Request) -> bool:
     last = request.session.get("last_seen")
     if not request.session.get("user") or last is None:
         return False
-    fired = [f for f, path in EXPIRY_FAULTS.items() if f in FAULTS and path in (None, request.url.path)]
+    here = (request.url.path, f"{request.method} {request.url.path}")
+    fired = [f for f, where in EXPIRY_FAULTS.items() if f in FAULTS and (where is None or where in here)]
     if fired or time.time() - last > SESSION_TTL_S:
         FAULTS.difference_update(fired)  # one-shot: expires the current session once
         request.session.clear()

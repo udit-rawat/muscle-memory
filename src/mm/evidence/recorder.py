@@ -12,6 +12,7 @@ why it is off by default and never part of committed evidence.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +33,7 @@ class RunRecorder:
         self.dir = runs_dir / self.run_id
         (self.dir / "screenshots").mkdir(parents=True, exist_ok=True)
         self._log = (self.dir / "events.jsonl").open("a", encoding="utf-8")
+        self._lock = threading.RLock()  # the operator console records from its own thread
         self._replacements: dict[str, str] = {}
         for value in secrets.values():
             self._add(value, REDACTED)
@@ -44,22 +46,25 @@ class RunRecorder:
     def taint(self, value: str | None) -> None:
         """Mark a value read from the application: it will be masked wherever it appears from now on."""
         if value and len(value.strip()) >= _MIN_TAINT:
-            self._add(value.strip(), mask_value(value.strip()))
+            with self._lock:
+                self._add(value.strip(), mask_value(value.strip()))
 
     def event(self, type_: str, **data: Any) -> None:
         record = {"ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
                   "t": round(time.monotonic() - self._t0, 3), "type": type_, **data}
         line = json.dumps(record, default=str, ensure_ascii=False)
-        self._log.write(self.scrub(line) + "\n")
-        self._log.flush()
+        with self._lock:
+            self._log.write(self.scrub(line) + "\n")
+            self._log.flush()
 
     def screenshot_path(self, name: str) -> Path:
         return self.dir / "screenshots" / f"{name}.png"
 
     def write_text(self, name: str, text: str) -> Path:
         path = self.dir / name
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(self.scrub(text), encoding="utf-8")
+        with self._lock:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(self.scrub(text), encoding="utf-8")
         return path
 
     def close(self) -> None:
@@ -67,7 +72,9 @@ class RunRecorder:
 
     def scrub(self, text: str) -> str:
         # Longest first, so a secret containing a shorter tainted value is replaced whole.
-        for raw in sorted(self._replacements, key=len, reverse=True):
+        with self._lock:
+            replacements = sorted(self._replacements, key=len, reverse=True)
+        for raw in replacements:
             text = text.replace(raw, self._replacements[raw])
         return text
 

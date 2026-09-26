@@ -86,12 +86,12 @@ TRACE_WARNING = ("--trace records a Playwright trace: it stores typed values (in
 def web_surface_factory(headless: bool, trace: bool, policy: Policy,
                         handoff: HandoffController | None = None,
                         operator: SimulatedOperator | None = None,
-                        secrets: SecretStore | None = None) -> Callable[[RunRecorder], WebSurface]:
+                        secrets: SecretStore | None = None, slow_mo_ms: int = 0) -> Callable[[RunRecorder], WebSurface]:
     """How the CLI builds browser sessions: the network policy is enforced on every request, credentials are
     masked in screenshots, and human actions are captured when a handoff is possible. Tests use this too,
     so they run with production defaults."""
     def make(rec: RunRecorder) -> WebSurface:
-        surface = WebSurface(headless=headless, trace_path=rec.trace_path if trace else None,
+        surface = WebSurface(headless=headless, trace_path=rec.trace_path if trace else None, slow_mo_ms=slow_mo_ms,
                              request_policy=request_policy(policy),
                              on_human_action=handoff.record_human_action if handoff else None,
                              mask_texts=secrets.values() if secrets else None)
@@ -150,6 +150,7 @@ def discover(
     escalate: bool = typer.Option(False, "--escalate", help=ESCALATE_HELP),
     simulate_operator: str = typer.Option(None, "--simulate-operator", help=SIMULATE_HELP),
     handoff_timeout: float = typer.Option(600, help="Seconds to wait for an operator."),
+    slow_mo: int = typer.Option(0, "--slow-mo", help="Delay (ms) between browser actions, to watch or record a run."),
 ) -> None:
     """Run the LLM agent on a goal; on success, compile and save a capability artifact."""
     from mm.agent.loop import discover as run_discovery
@@ -167,7 +168,7 @@ def discover(
                                        s.mm_headless if headless is None else headless)
     if trace:
         console.print(f"[yellow]warning:[/] {TRACE_WARNING}")
-    surface = web_surface_factory(show, trace, policy, handoff, operator, secrets)(recorder)
+    surface = web_surface_factory(show, trace, policy, handoff, operator, secrets, slow_mo)(recorder)
     console.print(f"[bold]discovery[/] {recorder.run_id} → {recorder.dir}")
     try:
         with _console(handoff, operator, s) as oc:
@@ -203,6 +204,7 @@ def replay(
     escalate: bool = typer.Option(False, "--escalate", help=ESCALATE_HELP),
     simulate_operator: str = typer.Option(None, "--simulate-operator", help=SIMULATE_HELP),
     handoff_timeout: float = typer.Option(600, help="Seconds to wait for an operator."),
+    slow_mo: int = typer.Option(0, "--slow-mo", help="Delay (ms) between browser actions, to watch or record a run."),
 ) -> None:
     """Replay a capability deterministically (no LLM). Prints the structured result as JSON.
 
@@ -229,7 +231,7 @@ def replay(
             cap, _kv(param), base_url=base_url or s.mockbank_url, secrets=secrets, recorder=recorder, policy=policy,
             approval=approval, approval_problem=approval_problem, handoff=handoff,
             escalation_timeout_s=handoff_timeout,
-            surface_factory=web_surface_factory(show, trace, policy, handoff, operator, secrets),
+            surface_factory=web_surface_factory(show, trace, policy, handoff, operator, secrets, slow_mo),
         )
     recorder.close()
     print(json.dumps(result.model_dump(mode="json"), indent=2))

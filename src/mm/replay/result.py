@@ -37,6 +37,7 @@ class FailureKind(StrEnum):
     CONTROL_LOST = "CONTROL_LOST"  # automation tried to act without holding the session's control lease
     ESCALATION_ABORTED = "ESCALATION_ABORTED"  # the operator chose to stop the run
     ESCALATION_TIMEOUT = "ESCALATION_TIMEOUT"  # nobody took over before the escalation timed out
+    SESSION_CLOSED = "SESSION_CLOSED"  # the browser window/session was closed while the run was using it
     OUTPUT_MISSING = "OUTPUT_MISSING"
     OUTPUT_UNPARSEABLE = "OUTPUT_UNPARSEABLE"
     SUCCESS_CHECK_FAILED = "SUCCESS_CHECK_FAILED"

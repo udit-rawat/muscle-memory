@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field
 from mm.evidence.recorder import RunRecorder
 from mm.handoff.lease import ControlLease, LeaseState, Owner
 from mm.redact import mask_pii
+from mm.surface.base import session_closed
 
 
 class Kind(StrEnum):
@@ -41,9 +42,10 @@ class Status(StrEnum):
     REJECTED = "rejected"
     ABORTED = "aborted"
     EXPIRED = "expired"
+    SESSION_CLOSED = "session_closed"  # the live browser session ended while the request was open
 
 
-TERMINAL = {Status.RESOLVED, Status.APPROVED, Status.REJECTED, Status.ABORTED, Status.EXPIRED}
+TERMINAL = {Status.RESOLVED, Status.APPROVED, Status.REJECTED, Status.ABORTED, Status.EXPIRED, Status.SESSION_CLOSED}
 
 
 class HumanAction(BaseModel):
@@ -124,7 +126,14 @@ class HandoffController:
                 return self._finish(item_id, Status.EXPIRED, "nobody", "no operator response before the timeout")
             if self.operator_tick is not None:
                 self.operator_tick(item)
-            idle(200)
+            try:
+                idle(200)
+            except Exception as exc:  # noqa: BLE001 — classified: a closed session ends the request, anything else is a bug
+                if not session_closed(exc):
+                    raise
+                if self.lease.state.owner is Owner.HUMAN:
+                    self.lease.to_agent("the browser session was closed")
+                return self._finish(item_id, Status.SESSION_CLOSED, "session", "the browser session was closed")
 
     # --- called by the operator (console) ------------------------------------------------------
 

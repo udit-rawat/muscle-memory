@@ -157,6 +157,12 @@ class ResolveResult(BaseModel):
     attempts: list[str] = Field(default_factory=list)  # per-strategy outcome, for debugging
 
 
+def session_closed(exc: BaseException) -> bool:
+    """True when an error means the live session itself is gone (window closed, browser exited)."""
+    text = f"{type(exc).__name__}: {exc}"
+    return "TargetClosedError" in text or "has been closed" in text or "Browser closed" in text
+
+
 class Surface(Protocol):
     """A live, controllable UI session. One instance == one session (cookies, window, process)."""
 

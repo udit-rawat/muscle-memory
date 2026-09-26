@@ -51,7 +51,7 @@ from mm.replay.result import (
     ReplaySuccess,
     StepTrace,
 )
-from mm.surface.base import ActionType, Surface
+from mm.surface.base import ActionType, Surface, session_closed
 from mm.values import SecretStore, render
 
 _POLL_S = 0.15
@@ -190,6 +190,10 @@ class _Replay:
         except _Stop as stop:
             return stop.result
         except Exception as exc:  # noqa: BLE001 — the caller gets a result, never a traceback
+            if session_closed(exc):
+                self.rec.event("session_closed", step_id=step_id)
+                return self._failure(FailureKind.SESSION_CLOSED, step_id, "the browser session was closed mid-run",
+                                     observed=str(exc)[:200], committed=self.committed)
             self.rec.event("internal_error", step_id=step_id, error=f"{type(exc).__name__}: {exc}")
             return self._failure(FailureKind.INTERNAL_ERROR, step_id, f"{type(exc).__name__}: {str(exc)[:300]}",
                                  committed=self.committed)
@@ -392,6 +396,9 @@ class _Replay:
             suggested=[f"Bring the application to the state after: {step.intent}", "Then hand control back (Resume)",
                        "Or Abort if the run should stop"])
         final = self.handoff.wait(item.id, idle=self.surface.idle, timeout_s=self.escalation_timeout_s)
+        if final.status is Status.SESSION_CLOSED:
+            raise _Stop(self._failure(FailureKind.SESSION_CLOSED, step.id,
+                                      "the browser session was closed during the handoff", observed=failure.message))
         if final.status is Status.ABORTED:
             raise _Stop(self._failure(FailureKind.ESCALATION_ABORTED, step.id, f"operator aborted: {final.note}",
                                       observed=failure.message))

@@ -49,6 +49,7 @@ class CompileError(ValueError):
 def compile_run(
     run: DiscoveryResult, cap_id: str, summary: str | None = None, pack: str | None = None,
     packs_dir: Path = PROJECT_ROOT / "packs", version: str = "0.1.0", policy: Policy | None = None,
+    recorded_on: str | None = None,
 ) -> Capability:
     """`pack`: detector pack name; None = the capability id's app prefix; "none" = deliberately no pack."""
     if run.status != "success":
@@ -119,6 +120,7 @@ def compile_run(
             recorded_at=datetime.now(UTC),
             provider=run.provider,
             model=run.model,
+            recorded_on=recorded_on,
             goal_template=parameterize(run.goal, run.inputs),
         ),
     )

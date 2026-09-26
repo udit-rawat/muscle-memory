@@ -11,6 +11,7 @@ import typer
 from pydantic import BaseModel
 from rich.console import Console
 
+from mm.artifact.schema import Capability
 from mm.config import Settings, get_settings
 from mm.evidence.recorder import RunRecorder
 from mm.handoff.console import Console as OperatorConsole
@@ -151,6 +152,7 @@ def discover(
     simulate_operator: str = typer.Option(None, "--simulate-operator", help=SIMULATE_HELP),
     handoff_timeout: float = typer.Option(600, help="Seconds to wait for an operator."),
     slow_mo: int = typer.Option(0, "--slow-mo", help="Delay (ms) between browser actions, to watch or record a run."),
+    tenant: str = typer.Option(None, help="The tenant being recorded on (default: MOCKBANK_TENANT)."),
 ) -> None:
     """Run the LLM agent on a goal; on success, compile and save a capability artifact."""
     from mm.agent.loop import discover as run_discovery
@@ -185,7 +187,8 @@ def discover(
     console.print(f"[{colour}]{result.status}[/] after {len(result.steps)} recorded steps: {result.summary}")
     if result.status == "success":
         cap = compile_run(result, name, pack=pack, packs_dir=s.mm_packs_dir, policy=policy,
-                          version=store.next_version(name, s.mm_capabilities_dir))
+                          version=store.next_version(name, s.mm_capabilities_dir),
+                          recorded_on=tenant or s.mockbank_tenant)
         path = store.save(cap, s.mm_capabilities_dir)
         (recorder.dir / "artifact.yaml").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         recorder.event("artifact_saved", path=str(path), capability=cap.id, version=cap.version)
@@ -205,19 +208,19 @@ def replay(
     simulate_operator: str = typer.Option(None, "--simulate-operator", help=SIMULATE_HELP),
     handoff_timeout: float = typer.Option(600, help="Seconds to wait for an operator."),
     slow_mo: int = typer.Option(0, "--slow-mo", help="Delay (ms) between browser actions, to watch or record a run."),
+    tenant: str = typer.Option(None, help="Specialise the capability for this tenant (tenants/<name>.yaml)."),
 ) -> None:
     """Replay a capability deterministically (no LLM). Prints the structured result as JSON.
 
     Exit codes: 0 success, 3 business outcome (a legitimate answer, e.g. MEMBER_NOT_FOUND), 2 failure.
     """
-    from mm.artifact import store
     from mm.artifact.approval import load_valid
     from mm.replay.executor import replay as run_replay
 
     s = get_settings()
     policy = _policy(s, base_url or s.mockbank_url)
-    cap = store.load(artifact)
-    approval, approval_problem = load_valid(artifact)
+    cap = _load(artifact, tenant, s)
+    approval, approval_problem = load_valid(artifact, cap)
     secrets = SecretStore.from_settings(s)
     recorder = RunRecorder(s.mm_runs_dir, "replay", secrets)
     handoff, operator, show = _handoff(recorder, s, escalate, simulate_operator,
@@ -243,18 +246,19 @@ def approve(
     artifact: Path = typer.Argument(..., exists=True, dir_okay=False, help="Path to a capability YAML."),
     by: str = typer.Option(..., "--by", help="Who is signing off (recorded in the approval and every run)."),
     note: str = typer.Option("", help="Why it is approved, e.g. the review ticket."),
+    tenant: str = typer.Option(None, help="Approve the capability as specialised for this tenant."),
 ) -> None:
-    """Sign off a capability version so its irreversible steps may replay. Bound to the file's exact bytes."""
-    from mm.artifact import store
+    """Sign off a capability version so its irreversible steps may replay. Bound to its exact content (and tenant)."""
     from mm.artifact.approval import approval_path
     from mm.artifact.approval import approve as sign
 
-    cap = store.load(artifact)
+    s = get_settings()
+    cap = _load(artifact, tenant, s)
     irreversible = [s for s in cap.steps if s.risk == "irreversible"]
     console.print(f"{cap.id} {cap.version}: {len(cap.steps)} steps, irreversible: "
                   + (", ".join(f"{s.id} ({s.intent})" for s in irreversible) or "none"))
     approval = sign(artifact, cap, by, note)
-    console.print(f"[green]approved[/] by {approval.approved_by} → {approval_path(artifact)} "
+    console.print(f"[green]approved[/] by {approval.approved_by} → {approval_path(artifact, cap.app.tenant)} "
                   f"(sha256 {approval.sha256[:12]}…)")
 
 
@@ -264,6 +268,15 @@ def schema() -> None:
     from mm.artifact.schema import Capability
 
     print(json.dumps(Capability.model_json_schema(by_alias=True), indent=2))
+
+
+def _load(artifact: Path, tenant: str | None, s: Settings) -> Capability:
+    """A capability as it will run: the base artifact, specialised for a tenant if one is named."""
+    from mm.artifact import store
+    from mm.artifact.tenancy import load_tenant, specialise
+
+    cap = store.load(artifact)
+    return specialise(cap, load_tenant(tenant, s.mm_tenants_dir)) if tenant else cap
 
 
 def _policy(s: Settings, app_url: str) -> Policy:

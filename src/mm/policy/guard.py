@@ -8,8 +8,9 @@ request any frame makes) is installed in the browser via `request_policy()`.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
+from typing import Any
 
 from mm.handoff.lease import ControlLease, ControlNotHeld
 from mm.policy.model import Policy, Risk, stricter
@@ -44,8 +45,9 @@ def request_policy(policy: Policy) -> RequestPolicy:
 
 
 class GuardedSurface:
-    def __init__(self, inner: Surface, policy: Policy, lease: ControlLease) -> None:
-        self.inner, self.policy, self.lease = inner, policy, lease
+    def __init__(self, inner: Surface, policy: Policy, lease: ControlLease,
+                 on_event: Callable[..., Any] | None = None) -> None:
+        self.inner, self.policy, self.lease, self.on_event = inner, policy, lease, on_event
         self.epoch = lease.state.epoch
         self._authorized = False
         self._names: dict[str, str] = {}  # ref -> accessible name, from the latest observation
@@ -85,12 +87,20 @@ class GuardedSurface:
     def act(self, action: ActionType, ref: str | None, value: str | None = None) -> ActResult:
         if (refusal := self._refuse(action, value, self.risk_of(action, ref=ref))) is not None:
             return refusal
+        self._drain_background()
         return self._blocked_requests_to_failure(self.inner.act(action, ref, value))
 
     def perform(self, action: ActionType, target: Target | None, value: str | None, timeout_ms: int) -> ActResult:
         if (refusal := self._refuse(action, value, self.risk_of(action, target=target))) is not None:
             return refusal
+        self._drain_background()
         return self._blocked_requests_to_failure(self.inner.perform(action, target, value, timeout_ms))
+
+    def _drain_background(self) -> None:
+        """Requests blocked since the last action (page scripts, or a human during a takeover) belong to nobody's
+        action: record them as background, so they are never blamed on the action about to run."""
+        if (stale := self.inner.drain_blocked_requests()) and self.on_event is not None:
+            self.on_event("background_requests_blocked", requests=stale)
 
     def navigate(self, url: str) -> None:
         self.lease.require_agent(self.epoch)

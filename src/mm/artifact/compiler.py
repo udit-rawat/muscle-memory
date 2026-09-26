@@ -32,7 +32,8 @@ from mm.artifact.schema import (
     Risk,
     Step,
 )
-from mm.policy.model import Policy
+from mm.config import PROJECT_ROOT
+from mm.policy.model import Policy, stricter
 from mm.surface.base import ActionType, Checkpoint, RoleStrategy, Target, TextStrategy
 from mm.values import parameterize, referenced
 
@@ -47,7 +48,7 @@ class CompileError(ValueError):
 
 def compile_run(
     run: DiscoveryResult, cap_id: str, summary: str | None = None, pack: str | None = None,
-    packs_dir: Path = Path("packs"), version: str = "0.1.0", policy: Policy | None = None,
+    packs_dir: Path = PROJECT_ROOT / "packs", version: str = "0.1.0", policy: Policy | None = None,
 ) -> Capability:
     """`pack`: detector pack name; None = the capability id's app prefix; "none" = deliberately no pack."""
     if run.status != "success":
@@ -147,8 +148,7 @@ def _risk(rec: RecordedStep, policy: Policy) -> Risk:
     names += [s.text for s in rec.target.strategies if isinstance(s, TextStrategy)]
     risk: Risk = "safe"
     for name in names or [rec.target.description]:
-        if policy.classify_control(rec.action, name) == "irreversible":
-            risk = "irreversible"
+        risk = stricter(risk, policy.classify_control(rec.action, name))
     return risk
 
 

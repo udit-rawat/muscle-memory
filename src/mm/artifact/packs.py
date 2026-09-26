@@ -8,6 +8,7 @@ import yaml
 from pydantic import BaseModel
 
 from mm.artifact.schema import Detector
+from mm.config import PROJECT_ROOT
 
 
 class DetectorPack(BaseModel):
@@ -17,7 +18,7 @@ class DetectorPack(BaseModel):
     detectors: list[Detector]
 
 
-def load_pack(name: str, packs_dir: Path = Path("packs")) -> DetectorPack | None:
+def load_pack(name: str, packs_dir: Path = PROJECT_ROOT / "packs") -> DetectorPack | None:
     path = packs_dir / f"{name}.yaml"
     if not path.exists():
         return None

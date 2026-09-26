@@ -3,12 +3,15 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import SecretStr
+from pydantic import SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Project files are found relative to the project, never to the directory `mm` happens to be run from.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(env_file=PROJECT_ROOT / ".env", env_file_encoding="utf-8", extra="ignore")
 
     # LLM providers — both reached through OpenAI-compatible endpoints.
     groq_api_key: SecretStr | None = None
@@ -30,7 +33,16 @@ class Settings(BaseSettings):
     mm_operator_port: int = 8700
     mm_headless: bool = False
     mm_max_steps: int = 25
-    mm_runs_dir: Path = Path("runs")
+    mm_runs_dir: Path = PROJECT_ROOT / "runs"
+    mm_policy_path: Path = PROJECT_ROOT / "config" / "policy.yaml"
+    mm_packs_dir: Path = PROJECT_ROOT / "packs"
+    mm_capabilities_dir: Path = PROJECT_ROOT / "capabilities"
+
+    @field_validator("mm_runs_dir", "mm_policy_path", "mm_packs_dir", "mm_capabilities_dir")
+    @classmethod
+    def _from_project_root(cls, path: Path) -> Path:
+        """A relative path in .env means relative to the project, not to wherever `mm` was started."""
+        return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 @lru_cache

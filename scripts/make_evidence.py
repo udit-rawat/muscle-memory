@@ -73,9 +73,10 @@ class Bank:
 
 def replay_scenario(name: str, what: str, artifact: Path, args: list[str], bank: Bank, runs: Path,
                     faults: tuple[str, ...] = (), extra_env: dict[str, str] | None = None,
-                    note: str = "") -> dict[str, Any]:
+                    note: str = "", shown_as: str | None = None) -> dict[str, Any]:
     bank.faults(*faults)
     cmd = ["mm", "replay", _rel(artifact), *args, "--base-url", bank.url, "--headless"]
+    shown = [shown_as if c == _rel(artifact) and shown_as else c for c in cmd]
     env = {**os.environ, "MM_RUNS_DIR": str(runs), **(extra_env or {})}
     before = set(runs.glob("*"))
     out = subprocess.run([sys.executable, "-m", "mm.cli", *cmd[1:]], capture_output=True, text=True, env=env,
@@ -84,24 +85,32 @@ def replay_scenario(name: str, what: str, artifact: Path, args: list[str], bank:
     run_dir = next(iter(set(runs.glob("*")) - before))
     dest = EVIDENCE / name
     shutil.copytree(run_dir, dest)
+    result = json.loads(_relative_text(json.dumps(result), run_dir))
     (dest / "result.json").write_text(json.dumps(_masked(result), indent=2) + "\n")
     header = f"# mock bank faults: {', '.join(faults)}\n" if faults else ""
     header += f"# {note}\n" if note else ""
-    (dest / "command.txt").write_text(header + " ".join(_quote(c) for c in cmd) + "\n")
+    (dest / "command.txt").write_text(header + " ".join(_quote(c) for c in shown) + "\n")
+    _relativise(dest, run_dir)
     print(f"  {name:44} {result['status']:17} {result.get('kind') or result.get('code') or ''}")
     return {"name": name, "what": what, "status": result["status"],
             "detail": result.get("kind") or result.get("code") or ", ".join(result.get("outputs", {}))}
 
 
-def discovery_scenario(name: str, what: str, artifact: Path) -> dict[str, Any]:
+def discovery_scenario(name: str, what: str, artifact: Path, kept: Path) -> dict[str, Any]:
+    """Copy the discovery run behind `artifact`. Its source is the local runs/ folder, which only exists where
+    the capability was recorded; everywhere else the previously committed evidence for it is kept as is."""
     cap = store.load(artifact)
     assert cap.provenance is not None
     src = ROOT / "runs" / cap.provenance.discovery_run_id
-    if not src.exists():
-        raise SystemExit(f"the discovery run {src} behind {_rel(artifact)} is not on this machine; "
-                         "keep the existing evidence folder for it")
     dest = EVIDENCE / name
-    shutil.copytree(src, dest, ignore=shutil.ignore_patterns("trace.zip"))
+    if src.exists():
+        shutil.copytree(src, dest, ignore=shutil.ignore_patterns("trace.zip"))
+        _relativise(dest, src)
+    elif (kept / name).exists():
+        shutil.copytree(kept / name, dest)
+    else:
+        raise SystemExit(f"neither the discovery run {cap.provenance.discovery_run_id} nor committed evidence "
+                         f"for {_rel(artifact)} is available")
     status = next(json.loads(line) for line in (dest / "events.jsonl").read_text().splitlines()
                   if '"discovery_end"' in line)["status"]
     print(f"  {name:44} {status}")
@@ -134,10 +143,12 @@ def stability(name: str, bank: Bank, runs: Path, n: int = 20) -> dict[str, Any]:
 def main() -> None:
     if not approval_path(OPEN).exists():
         raise SystemExit(f"{_rel(OPEN)} has no approval yet: run `uv run mm approve {_rel(OPEN)} --by <you>` first")
+    runs = Path(tempfile.mkdtemp(prefix="mm-evidence-"))
+    kept = runs / "kept-evidence"  # committed discovery evidence, reused where its source run is not local
     if EVIDENCE.exists():
+        shutil.copytree(EVIDENCE, kept)
         shutil.rmtree(EVIDENCE)
     EVIDENCE.mkdir()
-    runs = Path(tempfile.mkdtemp(prefix="mm-evidence-"))
     unapproved = runs / "unapproved" / OPEN.name  # the same capability, without its approval next to it
     unapproved.parent.mkdir()
     shutil.copy(OPEN, unapproved)
@@ -148,9 +159,9 @@ def main() -> None:
         print("discovery (copied from the runs that produced the committed capabilities):")
         rows.append(discovery_scenario("01_discovery_savings_balance",
                                        "LLM discovery with an unknown popup on: the popup becomes a learned "
-                                       "recoverable detector, not a step", BALANCE))
+                                       "recoverable detector, not a step", BALANCE, kept))
         rows.append(discovery_scenario("02_discovery_open_sub_account",
-                                       "LLM discovery that pauses for a human approval before Confirm", OPEN))
+                                       "LLM discovery that pauses for a human approval before Confirm", OPEN, kept))
         print("replay (no LLM):")
         bal = ["-p", "member_id=10871"]
         rows.append(replay_scenario("03_replay_success", "clean deterministic replay", BALANCE, bal, a, runs))
@@ -170,7 +181,8 @@ def main() -> None:
                                     ["-p", "member_id=12ab"], a, runs))
         rows.append(replay_scenario("11_replay_unapproved_irreversible", "Confirm refused without an approval",
                                     unapproved, OPEN_INPUTS, a, runs,
-                                    note=f"identical copy of {_rel(OPEN)}, without its approval file"))
+                                    note=f"identical copy of {_rel(OPEN)}, without its approval file",
+                                    shown_as=f"<copy-without-approval>/{OPEN.name}"))
         rows.append(replay_scenario("12_replay_approved_commit", "approved capability commits", OPEN,
                                     OPEN_INPUTS, a, runs))
         rows.append(replay_scenario("13_replay_handoff_unknown_popup",
@@ -204,6 +216,19 @@ def _index(rows: list[dict[str, Any]]) -> None:
         lines.append(f"| {num} | [{title.replace('_', ' ')}]({r['name']}/) | {r['what']} | "
                      f"`{r['status']}` {r['detail']} |")
     (EVIDENCE / "README.md").write_text("\n".join(lines) + "\n")
+
+
+def _relative_text(text: str, run_dir: Path) -> str:
+    """Paths inside a run point at where it ran (a temp dir, a home folder); in evidence they are relative."""
+    for prefix in (str(run_dir) + "/", str(run_dir), str(ROOT) + "/"):
+        text = text.replace(prefix, "").replace(json.dumps(prefix)[1:-1], "")
+    return text
+
+
+def _relativise(dest: Path, run_dir: Path) -> None:
+    for path in dest.rglob("*"):
+        if path.is_file() and path.suffix in (".jsonl", ".json", ".yaml", ".txt"):
+            path.write_text(_relative_text(path.read_text(), run_dir))
 
 
 def _masked(result: dict[str, Any]) -> dict[str, Any]:

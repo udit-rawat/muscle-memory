@@ -47,3 +47,10 @@ def test_no_secret_or_raw_value_in_evidence() -> None:
 @pytest.mark.skipif(not EVIDENCE.exists(), reason="no evidence generated yet")
 def test_evidence_has_no_traces() -> None:
     assert not [p for p in _files() if p.name == "trace.zip"]
+
+
+@pytest.mark.skipif(not EVIDENCE.exists(), reason="no evidence generated yet")
+def test_evidence_holds_no_machine_specific_paths() -> None:
+    offenders = [str(p.relative_to(EVIDENCE)) for p in _files() if p.suffix != ".png"
+                 and re.search(rb"/(Users|home|private|var/folders|tmp)/", p.read_bytes())]
+    assert not offenders, offenders

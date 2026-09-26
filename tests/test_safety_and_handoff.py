@@ -186,13 +186,14 @@ def test_approved_capability_commits_and_reports_the_approver(bank_url: str, tmp
 def test_approval_is_bound_to_the_artifact_bytes(tmp_path: Path) -> None:
     copy = tmp_path / OPEN.name
     copy.write_bytes(OPEN.read_bytes())
-    assert load_valid(copy) == (None, "capability has no approval")
+    assert load_valid(copy, store.load(copy)) == (None, "capability has no approval")
     approve(copy, store.load(copy), by="alice", note="reviewed")
-    approval, _ = load_valid(copy)
+    approval, _ = load_valid(copy, store.load(copy))
     assert approval is not None and approval.approved_by == "alice"
     assert approval.irreversible_steps == [s.id for s in store.load(copy).steps if s.risk == "irreversible"]
     copy.write_text(copy.read_text().replace("timeout_ms: 10000", "timeout_ms: 10001", 1))
-    assert load_valid(copy)[0] is None and "changed" in load_valid(copy)[1]  # content changed
+    verdict = load_valid(copy, store.load(copy))
+    assert verdict[0] is None and "changed" in verdict[1]  # content changed
 
 
 def test_commit_requests_are_blocked_even_if_the_control_is_misclassified(bank_url: str, tmp_path: Path) -> None:

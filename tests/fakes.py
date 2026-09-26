@@ -94,6 +94,7 @@ PERMISSIVE = Policy(network=NetworkPolicy(allow_origins=["*"]))
 def approval_for(cap: Capability, by: str = "test-reviewer") -> Approval:
     """A reviewer's sign-off covering every irreversible step of `cap`, exactly as `mm approve` computes it."""
     from mm.artifact.approval import content_digest
-    return Approval(capability_id=cap.id, version=cap.version, sha256=content_digest(cap), approved_by=by,
+    return Approval(capability_id=cap.id, version=cap.version, tenant=cap.app.tenant, sha256=content_digest(cap),
+                    approved_by=by,
                     approved_at="2026-09-26T00:00:00+00:00",
                     irreversible_steps=[s.id for s in cap.steps if s.risk == "irreversible"])

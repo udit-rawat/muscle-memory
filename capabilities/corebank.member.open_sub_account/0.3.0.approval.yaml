@@ -1,0 +1,9 @@
+capability_id: corebank.member.open_sub_account
+version: 0.3.0
+tenant: null
+sha256: 3f2284a9b7da7e83b769de4f788ed44a4f7747be53add1fdceaf4d981c992d46
+approved_by: udit
+approved_at: '2026-09-26T18:32:27+00:00'
+irreversible_steps:
+- s14_click_confirm
+note: approved on udit's instruction while away; steps, risks and detectors reviewed

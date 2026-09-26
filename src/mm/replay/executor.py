@@ -34,7 +34,7 @@ from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 from urllib.parse import urljoin
 
-from mm.artifact.approval import Approval
+from mm.artifact.approval import Approval, mismatch
 from mm.artifact.schema import Capability, Detector, OutputSpec, Step
 from mm.evidence.recorder import RunRecorder
 from mm.handoff.intervention import HandoffController, Kind, Status
@@ -116,8 +116,9 @@ def replay(
 ) -> ReplayResult:
     """`approval`: a valid sign-off for this exact artifact (see artifact/approval.py), required for any
     irreversible step. `handoff`: if given, unrecoverable states are escalated to a human operator."""
+    valid = approval is not None and mismatch(approval, cap) is None
     base: dict[str, Any] = {"capability_id": cap.id, "capability_version": cap.version, "run_id": recorder.run_id,
-                            "approved_by": approval.approved_by if approval else None}
+                            "approved_by": approval.approved_by if approval and valid else None}
     recorder.event("replay_start", capability=cap.id, version=cap.version, status=cap.status, base_url=base_url,
                    inputs={k: (mask_value(v) if cap.inputs[k].sensitive else v)
                            for k, v in params.items() if k in cap.inputs})
@@ -134,7 +135,7 @@ def replay(
         return result
 
     lease = handoff.lease if handoff else ControlLease()
-    surface = GuardedSurface(surface_factory(recorder), policy, lease)
+    surface = GuardedSurface(surface_factory(recorder), policy, lease, on_event=recorder.event)
     try:
         result = _Replay(cap, params, base_url, surface, secrets, recorder, base, approval, approval_problem,
                          handoff, escalation_timeout_s).run()
@@ -364,10 +365,14 @@ class _Replay:
     # --- approval and escalation ---------------------------------------------------------------
 
     def _require_approval(self, step: Step) -> None:
-        if self.approval is not None and step.id in self.approval.irreversible_steps:
-            self.rec.event("irreversible_authorized", step_id=step.id, approved_by=self.approval.approved_by)
-            return
-        why = self.approval_problem if self.approval is None else f"the approval does not cover {step.id}"
+        # Re-checked here, at the moment of use: the approval must be for this capability, this version and
+        # this exact content, and must name this step. Whoever built the Approval object is not trusted.
+        why = self.approval_problem if self.approval is None else mismatch(self.approval, self.cap)
+        if why is None and self.approval is not None:
+            if step.id in self.approval.irreversible_steps:
+                self.rec.event("irreversible_authorized", step_id=step.id, approved_by=self.approval.approved_by)
+                return
+            why = f"the approval does not cover {step.id}"
         raise _Stop(self._failure(FailureKind.POLICY_BLOCKED, step.id,
                                   f"{step.id} is irreversible and needs an approval: {why}",
                                   expected=f"a valid approval of {self.cap.id} {self.cap.version} naming {step.id}",
@@ -397,6 +402,10 @@ class _Replay:
         if overlays := self.surface.blocking_overlays():
             raise _Stop(self._failure(FailureKind.UNEXPECTED_STATE, step.id, "still blocked after the handoff",
                                       observed="; ".join(overlays)))
+        # The human may have exposed a known state (e.g. a "not found" behind the popup they closed): let the
+        # detectors classify the screen before anything assumes the step can go on.
+        if self._react(step) != "none":
+            self.rec.event("detector_after_handoff", step_id=step.id)
         done = bool(step.expect) and all(self.surface.check(cp, 2_000)[0] for cp in step.expect)
         if not done and step.id in self.dispatched_non_safe:
             raise _Stop(self._failure(FailureKind.UNSAFE_TO_REPEAT, step.id,

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import typer
@@ -12,11 +13,14 @@ from rich.console import Console
 
 from mm.config import Settings, get_settings
 from mm.evidence.recorder import RunRecorder
+from mm.handoff.console import Console as OperatorConsole
+from mm.handoff.console import ConsoleUnavailable
 from mm.handoff.intervention import HandoffController
 from mm.handoff.operator import SimulatedOperator
 from mm.policy.guard import request_policy
 from mm.policy.model import Policy
 from mm.surface.web import WebSurface
+from mm.values import SecretStore
 
 app = typer.Typer(no_args_is_help=True, add_completion=False, help="muscle-memory: record once, replay many.")
 console = Console()
@@ -77,18 +81,20 @@ def doctor(ping: bool = typer.Option(False, help="Make one tiny structured call 
 
 TRACE_WARNING = ("--trace records a Playwright trace: it stores typed values (including passwords) and full page "
                  "snapshots, and cannot be redacted. Use it for local debugging only; never commit it.")
-POLICY = Path("config/policy.yaml")
 
 
 def web_surface_factory(headless: bool, trace: bool, policy: Policy,
                         handoff: HandoffController | None = None,
-                        operator: SimulatedOperator | None = None) -> Callable[[RunRecorder], WebSurface]:
-    """How the CLI builds browser sessions: the network policy is enforced on every request, and human actions
-    are captured when a handoff is possible. Tests use this too, so they run with production defaults."""
+                        operator: SimulatedOperator | None = None,
+                        secrets: SecretStore | None = None) -> Callable[[RunRecorder], WebSurface]:
+    """How the CLI builds browser sessions: the network policy is enforced on every request, credentials are
+    masked in screenshots, and human actions are captured when a handoff is possible. Tests use this too,
+    so they run with production defaults."""
     def make(rec: RunRecorder) -> WebSurface:
         surface = WebSurface(headless=headless, trace_path=rec.trace_path if trace else None,
                              request_policy=request_policy(policy),
-                             on_human_action=handoff.record_human_action if handoff else None)
+                             on_human_action=handoff.record_human_action if handoff else None,
+                             mask_texts=secrets.values() if secrets else None)
         if operator is not None:
             operator.page = surface.page
         return surface
@@ -104,7 +110,7 @@ def _handoff(rec: RunRecorder, s: Settings, escalate: bool, simulate: str | None
     operator = None
     if simulate is not None:
         clicks = [c.split(":", 1)[1] for c in simulate.split(",") if c.startswith("click:")]
-        decision = next((c for c in simulate.split(",") if c in ("approve", "reject", "abort")), "approve")
+        decision = next((c for c in simulate.split(",") if c in ("approve", "reject", "abort")), "reject")
         operator = SimulatedOperator(f"http://127.0.0.1:{s.mm_operator_port}", page=None,  # type: ignore[arg-type]
                                      clicks=clicks, decision=decision, abort=decision == "abort" and not clicks)
         controller.operator_tick = operator.tick
@@ -149,12 +155,11 @@ def discover(
     from mm.agent.loop import discover as run_discovery
     from mm.artifact import store
     from mm.artifact.compiler import compile_run
-    from mm.handoff.console import Console as OperatorConsole
     from mm.llm.router import LLMRouter
-    from mm.values import SecretStore
 
     s = get_settings()
-    policy = Policy.load(POLICY)
+    entry = url or f"{s.mockbank_url}/login"
+    policy = _policy(s, entry)
     secrets = SecretStore.from_settings(s)
     router = LLMRouter.from_settings(s)
     recorder = RunRecorder(s.mm_runs_dir, "discover", secrets)
@@ -162,14 +167,14 @@ def discover(
                                        s.mm_headless if headless is None else headless)
     if trace:
         console.print(f"[yellow]warning:[/] {TRACE_WARNING}")
-    surface = web_surface_factory(show, trace, policy, handoff, operator)(recorder)
+    surface = web_surface_factory(show, trace, policy, handoff, operator, secrets)(recorder)
     console.print(f"[bold]discovery[/] {recorder.run_id} → {recorder.dir}")
     try:
-        with OperatorConsole(handoff, s.mm_operator_port) if handoff else _nothing() as oc:
+        with _console(handoff, operator, s) as oc:
             if oc is not None:
                 console.print(f"operator console: {oc.url}")
             result = run_discovery(
-                goal=goal, entry_url=url or f"{s.mockbank_url}/login", inputs=_kv(param), required_outputs=output,
+                goal=goal, entry_url=entry, inputs=_kv(param), required_outputs=output,
                 surface=surface, router=router, secrets=secrets, recorder=recorder, policy=policy, handoff=handoff,
                 handoff_timeout_s=handoff_timeout, max_steps=max_steps or s.mm_max_steps,
             )
@@ -178,8 +183,9 @@ def discover(
     colour = "green" if result.status == "success" else "red"
     console.print(f"[{colour}]{result.status}[/] after {len(result.steps)} recorded steps: {result.summary}")
     if result.status == "success":
-        cap = compile_run(result, name, pack=pack, version=store.next_version(name), policy=policy)
-        path = store.save(cap)
+        cap = compile_run(result, name, pack=pack, packs_dir=s.mm_packs_dir, policy=policy,
+                          version=store.next_version(name, s.mm_capabilities_dir))
+        path = store.save(cap, s.mm_capabilities_dir)
         (recorder.dir / "artifact.yaml").write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
         recorder.event("artifact_saved", path=str(path), capability=cap.id, version=cap.version)
         console.print(f"[green]capability saved[/] {path}")
@@ -204,12 +210,10 @@ def replay(
     """
     from mm.artifact import store
     from mm.artifact.approval import load_valid
-    from mm.handoff.console import Console as OperatorConsole
     from mm.replay.executor import replay as run_replay
-    from mm.values import SecretStore
 
     s = get_settings()
-    policy = Policy.load(POLICY)
+    policy = _policy(s, base_url or s.mockbank_url)
     cap = store.load(artifact)
     approval, approval_problem = load_valid(artifact)
     secrets = SecretStore.from_settings(s)
@@ -218,14 +222,14 @@ def replay(
                                        s.mm_headless if headless is None else headless)
     if trace:
         err_console.print(f"[yellow]warning:[/] {TRACE_WARNING}")
-    with OperatorConsole(handoff, s.mm_operator_port) if handoff else _nothing() as oc:
+    with _console(handoff, operator, s) as oc:
         if oc is not None:
             err_console.print(f"operator console: {oc.url}")
         result = run_replay(
             cap, _kv(param), base_url=base_url or s.mockbank_url, secrets=secrets, recorder=recorder, policy=policy,
             approval=approval, approval_problem=approval_problem, handoff=handoff,
             escalation_timeout_s=handoff_timeout,
-            surface_factory=web_surface_factory(show, trace, policy, handoff, operator),
+            surface_factory=web_surface_factory(show, trace, policy, handoff, operator, secrets),
         )
     recorder.close()
     print(json.dumps(result.model_dump(mode="json"), indent=2))
@@ -260,12 +264,26 @@ def schema() -> None:
     print(json.dumps(Capability.model_json_schema(by_alias=True), indent=2))
 
 
-class _nothing:  # noqa: N801 — a no-op context manager standing in for the console
-    def __enter__(self) -> None:
-        return None
+def _policy(s: Settings, app_url: str) -> Policy:
+    """The policy for this run: bound to the application's exact origin, with the operator console denied."""
+    return Policy.load(s.mm_policy_path).bind(app_url, deny_origins=[f"http://127.0.0.1:{s.mm_operator_port}",
+                                                                      f"http://localhost:{s.mm_operator_port}"])
 
-    def __exit__(self, *_: object) -> None:
-        return None
+
+@contextmanager
+def _console(handoff: HandoffController | None, operator: SimulatedOperator | None,
+             s: Settings) -> Iterator[OperatorConsole | None]:
+    if handoff is None:
+        yield None
+        return
+    try:
+        with OperatorConsole(handoff, s.mm_operator_port) as oc:
+            if operator is not None:
+                operator.token = oc.token
+            yield oc
+    except ConsoleUnavailable as exc:
+        err_console.print(f"[red]{exc}[/]")
+        raise typer.Exit(2) from exc
 
 
 if __name__ == "__main__":

@@ -47,7 +47,8 @@ def _accounts(member: str = "10871") -> int:
 def _replay(bank_url: str, tmp_path: Path, artifact: Path, inputs: dict[str, str], *, approved: bool = True,
             handoff: bool = False, operator: dict[str, Any] | None = None, timeout_s: float = 60,
             policy: Policy = POLICY) -> tuple[ReplayResult, RunRecorder]:
-    """Replay the way the CLI does (same surface factory, real policy, real console when handing off)."""
+    """Replay the way the CLI does (same surface factory, bound policy, real console when handing off)."""
+    policy = policy.bind(bank_url) if "{base_url}" in policy.network.allow_origins else policy
     rec = RunRecorder(tmp_path, "replay", SECRETS)
     cap = store.load(artifact)
     controller = HandoffController(rec) if handoff else None
@@ -56,12 +57,14 @@ def _replay(bank_url: str, tmp_path: Path, artifact: Path, inputs: dict[str, str
     if controller is not None and operator is not None:
         sim = SimulatedOperator(f"http://127.0.0.1:{port}", page=None, **operator)  # type: ignore[arg-type]
         controller.operator_tick = sim.tick
-    factory = web_surface_factory(True, False, policy, controller, sim)
+    factory = web_surface_factory(True, False, policy, controller, sim, SECRETS)
     try:
         if controller is None:
             return replay(cap, inputs, base_url=bank_url, secrets=SECRETS, recorder=rec, policy=policy,
                           approval=approval_for(cap) if approved else None, surface_factory=factory), rec
-        with Console(controller, port):
+        with Console(controller, port) as console:
+            if sim is not None:
+                sim.token = console.token
             return replay(cap, inputs, base_url=bank_url, secrets=SECRETS, recorder=rec, policy=policy,
                           approval=approval_for(cap) if approved else None, handoff=controller,
                           escalation_timeout_s=timeout_s, surface_factory=factory), rec
@@ -83,12 +86,13 @@ def _free_port() -> int:
 # --- policy --------------------------------------------------------------------------------------
 
 def test_policy_allowlist_and_risk_rules() -> None:
-    assert POLICY.url_allowed("http://127.0.0.1:8600/core/main.jsp")[0]
-    assert not POLICY.url_allowed("https://evil.example/core/main.jsp")[0]
-    assert not POLICY.url_allowed("http://127.0.0.1:8600/__control/faults")[0]
-    assert not POLICY.url_allowed("http://127.0.0.1:8600/logout")[0]
+    policy = POLICY.bind("http://127.0.0.1:8600")
+    assert policy.url_allowed("http://127.0.0.1:8600/core/main.jsp")[0]
+    assert not policy.url_allowed("https://evil.example/core/main.jsp")[0]
+    assert not policy.url_allowed("http://127.0.0.1:8600/__control/faults")[0]
+    assert not policy.url_allowed("http://127.0.0.1:8600/logout")[0]
     assert POLICY.classify_control(ActionType.CLICK, "Confirm") == "irreversible"
-    assert POLICY.classify_control(ActionType.CLICK, "Continue") == "safe"
+    assert POLICY.classify_control(ActionType.CLICK, "Continue") == "mutating"  # P10: a form submit
     assert POLICY.classify_control(ActionType.EXTRACT, "Confirm") == "safe"  # reading a label commits nothing
     assert POLICY.is_irreversible_request("POST", "http://h/core/opensub_confirm.jsp")
     assert not POLICY.is_irreversible_request("GET", "http://h/core/opensub_confirm.jsp")
@@ -130,8 +134,9 @@ def test_guard_enforces_action_types_and_irreversible_authorisation() -> None:
 
 def test_every_request_is_filtered_by_policy_in_the_browser(bank_url: str, tmp_path: Path) -> None:
     rec = RunRecorder(tmp_path, "t", SECRETS)
-    surface = web_surface_factory(True, False, POLICY)(rec)
-    guard = GuardedSurface(surface, POLICY, ControlLease())
+    policy = POLICY.bind(bank_url)
+    surface = web_surface_factory(True, False, policy)(rec)
+    guard = GuardedSurface(surface, policy, ControlLease())
     try:
         guard.navigate(f"{bank_url}/login")
         # A script on the page (or a compromised one) calling the control plane never reaches the server.
@@ -150,8 +155,9 @@ def test_every_request_is_filtered_by_policy_in_the_browser(bank_url: str, tmp_p
 
 def test_a_click_whose_request_is_blocked_is_not_reported_as_ok(bank_url: str, tmp_path: Path) -> None:
     rec = RunRecorder(tmp_path, "t", SECRETS)
-    surface = web_surface_factory(True, False, POLICY)(rec)
-    guard = GuardedSurface(surface, POLICY, ControlLease())
+    policy = POLICY.bind(bank_url)
+    surface = web_surface_factory(True, False, policy)(rec)
+    guard = GuardedSurface(surface, policy, ControlLease())
     try:
         guard.navigate(f"{bank_url}/login")
         surface.page.set_content(f'<a href="{bank_url}/logout">Sign Off</a>')
@@ -186,21 +192,22 @@ def test_approval_is_bound_to_the_artifact_bytes(tmp_path: Path) -> None:
     assert approval is not None and approval.approved_by == "alice"
     assert approval.irreversible_steps == [s.id for s in store.load(copy).steps if s.risk == "irreversible"]
     copy.write_text(copy.read_text().replace("timeout_ms: 10000", "timeout_ms: 10001", 1))
-    assert load_valid(copy)[0] is None and "changed" in load_valid(copy)[1]
+    assert load_valid(copy)[0] is None and "changed" in load_valid(copy)[1]  # content changed
 
 
 def test_commit_requests_are_blocked_even_if_the_control_is_misclassified(bank_url: str, tmp_path: Path) -> None:
     # Defence in depth: with a policy that does not recognise "Confirm" as irreversible, the artifact's own risk
     # level is removed as well; the network layer still refuses the commit POST outside an authorised window.
-    lax = POLICY.model_copy(deep=True)
+    lax = POLICY.bind(bank_url).model_copy(deep=True)
     lax.risk["irreversible"].control_names = r"(?!)"
     copy = tmp_path / OPEN.name
     copy.write_text(OPEN.read_text().replace("risk: irreversible", "risk: safe"))
     result, _ = _replay(bank_url, tmp_path, copy, OPEN_INPUTS, policy=lax)
     assert isinstance(result, ReplayFailure) and result.kind is FailureKind.POLICY_BLOCKED
     assert "irreversible request outside an authorised step" in (result.observed or "")
-    # Blocked in the browser, so it never reached the server: nothing committed, and the result says so.
-    assert result.may_have_committed is False and _accounts() == 2
+    # The commit was blocked in the browser and never reached the server: nothing committed. The result still
+    # says may_have_committed, correctly: the "Continue" submit (a mutating step) was dispatched before it.
+    assert result.may_have_committed is True and _accounts() == 2
 
 
 # --- redaction -----------------------------------------------------------------------------------
@@ -224,7 +231,7 @@ def test_the_model_never_sees_regulated_values() -> None:
 
 def test_screenshots_mask_pii_and_password_fields(bank_url: str, tmp_path: Path, monkeypatch: Any) -> None:
     rec = RunRecorder(tmp_path, "t", SECRETS)
-    surface = web_surface_factory(True, False, POLICY)(rec)
+    surface = web_surface_factory(True, False, POLICY.bind(bank_url))(rec)
     seen: dict[str, Any] = {}
     try:
         surface.navigate(f"{bank_url}/login")
@@ -277,7 +284,8 @@ def test_console_api_drives_the_lease(tmp_path: Path) -> None:
     rec = RunRecorder(tmp_path, "t", SECRETS)
     c = HandoffController(rec)
     item = c.open(Kind.UNRECOVERABLE_STATE, "cap", "unknown dialog", step_id="s09")
-    client = TestClient(create_app(c))
+    client = TestClient(create_app(c, token="t0k", own_origin="http://testserver"),
+                        headers={"X-Operator-Token": "t0k"})
     assert client.get("/").status_code == 200 and item.id in client.get("/").text
     assert client.post(f"/api/interventions/{item.id}/resume", json={"by": "x"}).status_code == 409  # not claimed
     assert client.post(f"/api/interventions/{item.id}/claim", json={"by": "alice"}).json()["status"] == "claimed"
@@ -327,7 +335,7 @@ def test_business_outcomes_are_answers_and_never_escalate(bank_url: str, tmp_pat
 def test_human_actions_never_capture_typed_values(bank_url: str, tmp_path: Path) -> None:
     rec = RunRecorder(tmp_path, "t", SECRETS)
     c = HandoffController(rec)
-    surface = web_surface_factory(True, False, POLICY, c)(rec)
+    surface = web_surface_factory(True, False, POLICY.bind(bank_url), c)(rec)
     try:
         surface.navigate(f"{bank_url}/login")
         item = c.open(Kind.STUCK, "goal", "help")
@@ -370,7 +378,7 @@ class _ConfirmPage(FakeSurface):
 def _discover_confirm(tmp_path: Path, decision: str) -> tuple[Any, FakeState, HandoffController]:
     rec = RunRecorder(tmp_path, "discover", SECRETS)
     c = HandoffController(rec)
-    c.operator_tick = lambda item: getattr(c, decision)(item.id, "alice")
+    c.operator_tick = lambda item: getattr(c, decision)(item.id, "alice")  # an explicit decision, never a default
     state = FakeState()
     decisions = [{"thought": "commit", "action": "click", "ref": "e1"}]
     decisions += [{"thought": "done", "action": "done", "summary": "ok"}] if decision == "approve" else \

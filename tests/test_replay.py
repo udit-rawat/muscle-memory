@@ -27,7 +27,8 @@ def _replay(bank_url: str, tmp_path: Path, cap_id: str, **inputs: str) -> Replay
     recorder = RunRecorder(tmp_path, "replay", SECRETS)
     try:
         cap = store.load(store.latest_path(cap_id, CAPS))
-        return replay(cap, inputs, base_url=bank_url, secrets=SECRETS, policy=POLICY, approval=approval_for(cap),
+        return replay(cap, inputs, base_url=bank_url, secrets=SECRETS, policy=POLICY.bind(bank_url),
+                      approval=approval_for(cap),
                       recorder=recorder, surface_factory=lambda rec: WebSurface(headless=True))
     finally:
         recorder.close()

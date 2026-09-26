@@ -86,12 +86,16 @@ class _Discovery:
             r.status, r.summary = "error", f"could not open {r.entry_url}: {exc}"
             return self._end()
         started = time.monotonic()
-        for n in range(1, max_steps + 1):
-            if time.monotonic() - started > timeout_s:
-                r.status, r.summary = "timeout", f"no result after {timeout_s:.0f}s"
-                break
-            if not self._turn(n):
-                break
+        try:
+            for n in range(1, max_steps + 1):
+                if time.monotonic() - started > timeout_s:
+                    r.status, r.summary = "timeout", f"no result after {timeout_s:.0f}s"
+                    break
+                if not self._turn(n):
+                    break
+        except Exception as exc:  # noqa: BLE001 — a crashed browser or bug ends discovery with a status
+            r.status, r.summary = "error", f"{type(exc).__name__}: {str(exc)[:300]}"
+            self.rec.event("internal_error", error=r.summary)
         return self._end()
 
     def _turn(self, n: int) -> bool:
@@ -100,7 +104,9 @@ class _Discovery:
         obs = self.surface.observe()
         # Reading or acting underneath a modal would record a flow in a state replay never sees.
         overlay = "; ".join(self.surface.blocking_overlays())
-        prompt = self._prompt(obs, overlay)
+        # One string, sanitised once, is both sent to the model and kept as evidence: the log cannot
+        # show something other than what the model received.
+        prompt = self.rec.scrub(mask_pii(self._prompt(obs, overlay)))
         self.rec.write_text(f"prompts/{n:02d}.txt", prompt)
         try:
             call = self.router.structured(
@@ -151,7 +157,9 @@ class _Discovery:
             if verdict is None:
                 return False  # aborted
             if not verdict:
-                self.history.append(f"{n}. {d.action} {described} -> NOT APPROVED by the operator; do not retry it")
+                why = "refused: irreversible actions need an operator's approval and no operator is available" \
+                    if self.handoff is None else "NOT APPROVED by the operator"
+                self.history.append(f"{n}. {d.action} {described} -> {why}; do not retry it")
                 return self._no_progress(n)
             with self.surface.irreversible_authorized():
                 res = self.surface.act(action, d.ref, concrete)
@@ -202,8 +210,9 @@ class _Discovery:
         if final.status is not Status.RESOLVED:
             r.status, r.summary = "aborted", f"handoff {final.status}: {final.note or reason}"
             return False
-        if final.human_actions:
-            r.human_took_control = True
+        # A human held the session: whatever they did (captured or not: keyboard, URL bar...) is not in the
+        # recorded steps, so the result must not compile as if it were complete.
+        r.human_took_control = True
         did = "; ".join(f"{a.kind} {a.name!r}" for a in final.human_actions) or "nothing"
         self.history.append(f"{n}. HUMAN OPERATOR took control and did: {did}. Control is back with you.")
         self.surface.resync()
@@ -290,7 +299,7 @@ def discover(
     recorder.event("discovery_start", goal=goal, entry_url=entry_url, inputs=dict(inputs),
                    required_outputs=required_outputs, secrets=secrets.names, escalation=handoff is not None)
     lease = handoff.lease if handoff else ControlLease()
-    guarded = GuardedSurface(surface, policy, lease)
+    guarded = GuardedSurface(surface, policy, lease, on_event=recorder.event)
     try:
         return _Discovery(goal, entry_url, inputs, required_outputs, guarded, router, secrets, recorder, handoff,
                           handoff_timeout_s).run(max_steps, timeout_s)

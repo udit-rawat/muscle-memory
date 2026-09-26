@@ -3,11 +3,11 @@
 version: 1
 
 network:
-  # Origins the browser may contact at all. In production this is bound per tenant (the tenant's
-  # base URL); here it is the local mock bank on any port.
+  # Origins the browser may contact at all. "{base_url}" is bound at invocation to the exact origin of the
+  # tenant's base URL (scheme, host and port), so a run can reach its own application and nothing else:
+  # not other tenants, not other local services, and never the operator console (always denied).
   allow_origins:
-    - "http://127.0.0.1:*"
-    - "http://localhost:*"
+    - "{base_url}"
   # Paths that are never reachable by automation, on any allowed origin.
   deny_paths:
     - "^/__control/"   # the mock bank's test-harness control plane
@@ -17,6 +17,7 @@ actions:
   allowed: [navigate, click, fill, select, extract]
 
 risk:
+  # Strictest level first. Judged on a control's accessible name (what the operator reads on it).
   irreversible:
     # Controls whose activation commits something (matched against the accessible name).
     control_names: "(?i)\\b(confirm|post|transfer|delete|close account|approve|disburse|submit payment)\\b"
@@ -24,3 +25,7 @@ risk:
     # irreversible step is explicitly authorised at that moment (defence in depth).
     requests:
       - { method: POST, path: "_confirm\\.jsp$" }
+  mutating:
+    # Controls that change application state but are not final (a form submit that creates a pending
+    # request, a save). No approval needed, but once dispatched they are never repeated by a retry or restart.
+    control_names: "(?i)\\b(save|update|submit|continue|apply|create|modify)\\b"

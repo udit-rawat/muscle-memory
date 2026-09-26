@@ -380,12 +380,31 @@ class WebSurface:
                     except PlaywrightError as exc:
                         attempts.append(f"{strategy.by}: error {_first_line(exc)}")
                         continue
-                    if n == 1:
-                        return loc, frame, i, attempts
-                    attempts.append(f"{strategy.by}: {n} matches")
+                    if n != 1:
+                        attempts.append(f"{strategy.by}: {n} matches")
+                        continue
+                    if strategy.by in STRUCTURAL and (refusal := self._name_mismatch(loc, target)) is not None:
+                        attempts.append(f"{strategy.by}: {refusal}")
+                        continue
+                    return loc, frame, i, attempts
             if time.monotonic() >= deadline:
                 return None, frame, None, attempts
             self.page.wait_for_timeout(_POLL_MS)
+
+    def _name_mismatch(self, loc: Locator, target: Target) -> str | None:
+        """A positional locator (css, form-field name) may find *an* element; the action only proceeds if that
+        element reads as the control the step expects. Without this, a reordered menu or form (another tenant, a
+        new version) would make it act on a different control: the wrong link, or the wrong button."""
+        expected = {_norm(s.name) for s in target.strategies if isinstance(s, RoleStrategy)}
+        expected |= {_norm(s.text) for s in target.strategies if isinstance(s, TextStrategy)}
+        expected |= {_norm(s.title) for s in target.strategies if isinstance(s, TitleStrategy)}
+        if not expected:
+            return None  # nothing semantic was ever known about this element: nothing to check against
+        desc = loc.first.evaluate(js.DESCRIBE)
+        seen = {_norm(desc.get(k) or "") for k in ("name", "title", "text")} - {""}
+        if seen & expected:
+            return None
+        return f"matched {desc.get('name')!r}, not the expected {sorted(expected)}: refused"
 
     def _frame(self, path: list[str]) -> Frame | None:
         frame = self.page.main_frame
@@ -461,6 +480,10 @@ def xpath_literal(s: str) -> str:
     if '"' not in s:
         return f'"{s}"'
     return "concat(" + ", \"'\", ".join(f"'{p}'" for p in s.split("'")) + ")"
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split()).casefold()
 
 
 def _squash(text: str) -> str:

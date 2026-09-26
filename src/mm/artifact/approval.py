@@ -26,6 +26,7 @@ from mm.artifact.schema import Capability
 class Approval(BaseModel):
     capability_id: str
     version: str
+    tenant: str | None = None  # a tenant-specialised capability is approved separately
     sha256: str  # of the capability's canonical content (see content_digest)
     approved_by: str
     approved_at: str
@@ -39,35 +40,39 @@ def content_digest(cap: Capability) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def approval_path(artifact: Path) -> Path:
-    return artifact.with_name(f"{artifact.stem}.approval.yaml")
+def approval_path(artifact: Path, tenant: str | None = None) -> Path:
+    suffix = f".{tenant}" if tenant else ""
+    return artifact.with_name(f"{artifact.stem}{suffix}.approval.yaml")
 
 
 def approve(artifact: Path, cap: Capability, by: str, note: str = "") -> Approval:
-    approval = Approval(capability_id=cap.id, version=cap.version, sha256=content_digest(cap), approved_by=by,
-                        approved_at=datetime.now(UTC).isoformat(timespec="seconds"),
+    """Sign off `cap` (the base capability, or its specialisation for one tenant) as stored at `artifact`."""
+    approval = Approval(capability_id=cap.id, version=cap.version, tenant=cap.app.tenant, sha256=content_digest(cap),
+                        approved_by=by, approved_at=datetime.now(UTC).isoformat(timespec="seconds"),
                         irreversible_steps=[s.id for s in cap.steps if s.risk == "irreversible"], note=note)
-    approval_path(artifact).write_text(yaml.safe_dump(approval.model_dump(), sort_keys=False), encoding="utf-8")
+    approval_path(artifact, cap.app.tenant).write_text(yaml.safe_dump(approval.model_dump(), sort_keys=False),
+                                                       encoding="utf-8")
     return approval
 
 
 def mismatch(approval: Approval, cap: Capability) -> str | None:
     """Why this approval does not apply to this capability, or None if it does."""
-    if (approval.capability_id, approval.version) != (cap.id, cap.version):
-        return f"approval is for {approval.capability_id} {approval.version}, not {cap.id} {cap.version}"
+    if (approval.capability_id, approval.version, approval.tenant) != (cap.id, cap.version, cap.app.tenant):
+        return (f"approval is for {approval.capability_id} {approval.version} (tenant {approval.tenant or 'base'}), "
+                f"not {cap.id} {cap.version} (tenant {cap.app.tenant or 'base'})")
     if approval.sha256 != content_digest(cap):
         return "approval does not match the capability's content (it changed after it was approved)"
     return None
 
 
-def load_valid(artifact: Path) -> tuple[Approval | None, str]:
-    """The approval if it exists and still matches the artifact; otherwise None and why."""
-    from mm.artifact import store
-
-    path = approval_path(artifact)
+def load_valid(artifact: Path, cap: Capability) -> tuple[Approval | None, str]:
+    """The approval for `cap` (as loaded from `artifact`, possibly specialised for a tenant) if it exists and
+    still matches; otherwise None and why."""
+    path = approval_path(artifact, cap.app.tenant)
     if not path.exists():
-        return None, "capability has no approval"
+        who = f"for tenant {cap.app.tenant}" if cap.app.tenant else ""
+        return None, f"capability has no approval {who}".strip()
     approval = Approval.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
-    if (why := mismatch(approval, store.load(artifact))) is not None:
+    if (why := mismatch(approval, cap)) is not None:
         return None, why
     return approval, ""

@@ -111,7 +111,7 @@ class _Discovery:
         try:
             call = self.router.structured(
                 for_screen({e.ref for e in obs.elements}, set(self.inputs), set(self.secrets.names),
-                           set(r.outputs), overlay),
+                           set(r.outputs), overlay, {e.ref for e in obs.elements if e.credential}),
                 [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}],
             )
         except LLMUnavailable as exc:

@@ -23,6 +23,7 @@ from playwright.sync_api import Error as PlaywrightError
 from mm.redact import PII_ANY
 from mm.surface import js
 from mm.surface.base import (
+    CREDENTIAL_LABEL,
     STRUCTURAL,
     ActionType,
     ActResult,
@@ -175,8 +176,11 @@ class WebSurface:
                         continue
                     ref = f"e{len(elements) + 1}"
                     self._refs[ref] = (frame, handle, desc)
+                    credential = desc["role"] == "textbox" and (
+                        desc["type"] == "password" or bool(CREDENTIAL_LABEL.search(desc["name"])))
                     elements.append(ElementRef(ref=ref, role=desc["role"], name=desc["name"][:80],
-                                               value=desc["value"], options=desc["options"], frame_path=path))
+                                               value=desc["value"], options=desc["options"], credential=credential,
+                                               frame_path=path))
         shot = self.page.screenshot() if with_screenshot else None
         return Observation(url=self.page.url, title=self.page.title(), elements=elements,
                            frames=frames, truncated=truncated, screenshot_png=shot)

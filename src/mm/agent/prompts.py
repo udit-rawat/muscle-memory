@@ -65,6 +65,7 @@ def user_message(
         where = f" @{'/'.join(e.frame_path)}" if e.frame_path else ""
         val = f" value={mask_pii(e.value)!r}" if e.value else ""
         opts = f" options=[{' | '.join(e.options)}]" if e.options else ""
+        opts += " (credential: fill with a {{secret:NAME}} placeholder)" if e.credential else ""
         lines.append(f"[{e.ref}] {e.role} \"{mask_pii(e.name)}\"{val}{opts}{where}")
     if obs.truncated:
         lines.append(f"({obs.truncated} more elements not shown: the screen is larger than the observation limit)")

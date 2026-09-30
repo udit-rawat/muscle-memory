@@ -7,6 +7,7 @@ resolve them. Nothing above this module imports Playwright.
 
 from __future__ import annotations
 
+import re
 from enum import StrEnum
 from typing import Annotated, Literal, Protocol
 
@@ -110,6 +111,7 @@ class ElementRef(BaseModel):
     name: str = ""
     value: str | None = None
     options: list[str] | None = None  # for dropdowns: the option labels
+    credential: bool = False  # a password field, or one labelled as a user/operator id, login, PIN...
     frame_path: list[str] = Field(default_factory=list)
 
 
@@ -155,6 +157,13 @@ class ResolveResult(BaseModel):
     found: bool
     strategy_index: int | None = None
     attempts: list[str] = Field(default_factory=list)  # per-strategy outcome, for debugging
+
+
+# Field labels that ask for a credential. Deliberately broad: a false positive only means the agent must use a
+# secret placeholder (or ask a human); a false negative would let a model type a guessed login.
+CREDENTIAL_LABEL = re.compile(
+    r"(?i)\b(pass(word|code|phrase)?|pin|user\s*(name|id)?|operator\s*id|login|log\s*on|sign\s*on\s*id|"
+    r"secret|token|otp|one[- ]time)\b")
 
 
 def session_closed(exc: BaseException) -> bool:

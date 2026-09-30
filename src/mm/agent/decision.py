@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field, model_validator
 
 AgentAction = Literal["click", "fill", "select", "extract", "navigate", "done", "fail", "request_human"]
 _SNAKE = re.compile(r"^[a-z][a-z0-9_]*$")
+_SECRET_ONLY = re.compile(r"\{\{\s*secret:[A-Za-z_][A-Za-z0-9_]*\s*\}\}")
 
 
 class Decision(BaseModel):
@@ -39,6 +40,7 @@ class Decision(BaseModel):
         secrets: set[str] = ctx.get("secrets", set())
         extracted: set[str] = ctx.get("extracted", set())
         overlay: str = ctx.get("overlay", "")
+        credential_refs: set[str] = ctx.get("credential_refs", set())
 
         if self.action in ("click", "fill", "select", "extract"):
             if not self.ref:
@@ -53,6 +55,10 @@ class Decision(BaseModel):
             raise ValueError(f"{self.output_name!r} is already extracted; extract something else or finish with done")
         if self.action in ("done", "fail", "request_human") and not self.summary:
             raise ValueError(f"{self.action} requires 'summary'")
+        if self.action == "fill" and self.ref in credential_refs and not _SECRET_ONLY.fullmatch(self.value or ""):
+            raise ValueError(f"{self.ref} is a credential field: fill it with exactly one {{{{secret:NAME}}}} "
+                             f"placeholder from {sorted(secrets)}, never a typed or guessed value; "
+                             "if no secret fits, use request_human")
         if self.interruption and self.action != "click":
             raise ValueError("only a click can be marked as dismissing an interruption")
         dismissing = self.action == "click" and self.interruption
@@ -68,12 +74,13 @@ class Decision(BaseModel):
 
 
 def for_screen(refs: set[str], inputs: set[str], secrets: set[str], extracted: set[str] | None = None,
-               overlay: str = "") -> type[Decision]:
+               overlay: str = "", credential_refs: set[str] | None = None) -> type[Decision]:
     """A Decision type whose validator knows what is on the current screen and what is already done."""
 
     class ScreenDecision(Decision):
         screen: ClassVar[dict[str, Any]] = {"refs": refs, "inputs": inputs, "secrets": secrets,
-                                            "extracted": extracted or set(), "overlay": overlay}
+                                            "extracted": extracted or set(), "overlay": overlay,
+                                            "credential_refs": credential_refs or set()}
 
     ScreenDecision.__name__ = ScreenDecision.__qualname__ = "Decision"
     return ScreenDecision

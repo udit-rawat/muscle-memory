@@ -71,13 +71,22 @@ uv run mm replay capabilities/corebank.member.get_savings_balance/0.3.0.yaml -p 
 
 ### Irreversible steps and human handoff
 
-`open_sub_account` ends with an irreversible **Confirm**, which only replays under a reviewer's approval:
+`open_sub_account` ends with an irreversible **Confirm**, which only replays under a reviewer's approval. The
+committed `0.3.0` carries one (`0.3.0.approval.yaml`, bound to its content hash), so it commits:
 
 ```bash
 O=capabilities/corebank.member.open_sub_account/0.3.0.yaml
-uv run mm replay $O -p member_id=10871 -p "account_type=Holiday Club" -p deposit=25 -p nickname=Fund
-#   -> POLICY_BLOCKED at s14_click_confirm unless an approval for this exact content exists
-uv run mm approve $O --by <your-name>          # writes 0.3.0.approval.yaml, bound to the content hash
+uv run mm replay $O -p member_id=10871 -p "account_type=Holiday Club" -p deposit=25 -p nickname=Fund   # success
+```
+
+To see the gate refuse, replay an unapproved copy (or the same capability for another tenant, which needs its
+own approval), then approve it:
+
+```bash
+mkdir -p /tmp/unapproved && cp $O /tmp/unapproved/
+uv run mm replay /tmp/unapproved/0.3.0.yaml -p member_id=10871 -p "account_type=Holiday Club" -p deposit=25 -p nickname=Fund
+#   -> POLICY_BLOCKED at s14_click_confirm: no approval for this content
+uv run mm approve /tmp/unapproved/0.3.0.yaml --by <your-name>   # writes the approval next to the copy; replay now commits
 ```
 
 Handoff: switch on a popup no detector knows, and run with `--escalate`. The run stops and prints an operator

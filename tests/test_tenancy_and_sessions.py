@@ -1,4 +1,4 @@
-"""Phase 4: behaviour found while demoing (closing the browser mid-run), and the tenant override layer."""
+"""A closed browser session is reported as such, and one capability is reused across tenants via profiles."""
 
 from __future__ import annotations
 

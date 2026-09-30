@@ -1,5 +1,5 @@
-"""Fixes found by probing the fallback model: credential fields only take secret placeholders; the fallback
-can be a list of models."""
+"""Credential fields only take secret placeholders (a model must never type or guess a login), and the
+fallback provider can be a list of models tried in order."""
 
 from __future__ import annotations
 

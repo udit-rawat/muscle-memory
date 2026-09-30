@@ -1,4 +1,4 @@
-"""Phase 3: safety guardrails (policy, guard, network enforcement, approvals, redaction) and the human
+"""Safety guardrails (policy, guard, network enforcement, approvals, redaction) and the human
 handoff (lease, interventions, console, live takeover of the same session)."""
 
 from __future__ import annotations
@@ -92,7 +92,7 @@ def test_policy_allowlist_and_risk_rules() -> None:
     assert not policy.url_allowed("http://127.0.0.1:8600/__control/faults")[0]
     assert not policy.url_allowed("http://127.0.0.1:8600/logout")[0]
     assert POLICY.classify_control(ActionType.CLICK, "Confirm") == "irreversible"
-    assert POLICY.classify_control(ActionType.CLICK, "Continue") == "mutating"  # P10: a form submit
+    assert POLICY.classify_control(ActionType.CLICK, "Continue") == "mutating"  # a form submit
     assert POLICY.classify_control(ActionType.EXTRACT, "Confirm") == "safe"  # reading a label commits nothing
     assert POLICY.is_irreversible_request("POST", "http://h/core/opensub_confirm.jsp")
     assert not POLICY.is_irreversible_request("GET", "http://h/core/opensub_confirm.jsp")

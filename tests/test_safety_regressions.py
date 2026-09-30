@@ -1,5 +1,5 @@
-"""Regression tests for the Phase 3 audit (P1-P17, plus the test-bias gaps T*). Each was written to fail on
-the pre-fix code."""
+"""Safety properties of the model boundary, approvals, the allowlist, the operator console, takeovers,
+risk levels and evidence masking, each pinned by a test that fails if the property is lost."""
 
 from __future__ import annotations
 
@@ -90,7 +90,7 @@ def _live(bank_url: str, tmp_path: Path, artifact: Path, inputs: dict[str, str],
         rec.close()
 
 
-# --- P1: the prompt the model receives is the prompt we log, and holds no regulated value ---------
+# --- the prompt the model receives is the prompt we log, and holds no regulated value ---------
 
 class _BalancePage(FakeSurface):
     def observe(self, with_screenshot: bool = False) -> Observation:
@@ -104,7 +104,7 @@ class _BalancePage(FakeSurface):
                          target=Target(strategies=[cell]))
 
 
-def test_p1_sent_prompt_equals_logged_prompt_and_has_no_pii(tmp_path: Path) -> None:
+def test_sent_prompt_equals_logged_prompt_and_has_no_pii(tmp_path: Path) -> None:
     rec = RunRecorder(tmp_path, "discover", SecretStore({}))
     router = _Script([{"thought": "read", "action": "extract", "ref": "e1", "output_name": "savings_balance"},
                       {"thought": "done", "action": "done", "summary": "balance is $2,450.17"}])
@@ -117,9 +117,9 @@ def test_p1_sent_prompt_equals_logged_prompt_and_has_no_pii(tmp_path: Path) -> N
         assert sent == (rec.dir / "prompts" / f"{i:02d}.txt").read_text(), "evidence differs from what was sent"
 
 
-# --- P2: an approval only authorises the exact capability it was given for -----------------------
+# --- an approval only authorises the exact capability it was given for -----------------------
 
-def test_p2_approval_for_another_capability_does_not_authorise(bank_url: str, tmp_path: Path) -> None:
+def test_approval_for_another_capability_does_not_authorise(bank_url: str, tmp_path: Path) -> None:
     other = _approved(BALANCE).model_copy(update={"irreversible_steps": [s.id for s in store.load(OPEN).steps
                                                                          if s.risk == "irreversible"]})
     result = _live(bank_url, tmp_path, OPEN, OPEN_INPUTS, approval=other)
@@ -127,7 +127,7 @@ def test_p2_approval_for_another_capability_does_not_authorise(bank_url: str, tm
     assert len(bank.data.MEMBERS["10871"].accounts) == 2
 
 
-def test_p2_approval_for_modified_content_does_not_authorise(bank_url: str, tmp_path: Path) -> None:
+def test_approval_for_modified_content_does_not_authorise(bank_url: str, tmp_path: Path) -> None:
     approval = _approved(OPEN)
     changed = tmp_path / OPEN.name
     changed.write_text(OPEN.read_text().replace("timeout_ms: 10000", "timeout_ms: 10001", 1))
@@ -135,7 +135,7 @@ def test_p2_approval_for_modified_content_does_not_authorise(bank_url: str, tmp_
     assert isinstance(result, ReplayFailure) and result.kind is FailureKind.POLICY_BLOCKED
 
 
-def test_t2_cli_approve_then_replay_then_tamper(bank_url: str, tmp_path: Path) -> None:
+def test_cli_approve_then_replay_then_tamper(bank_url: str, tmp_path: Path) -> None:
     """The real path end to end: `mm approve` writes the sidecar, `mm replay` honours it, a one-byte edit breaks it."""
     artifact = tmp_path / OPEN.name
     artifact.write_bytes(OPEN.read_bytes())
@@ -157,9 +157,9 @@ def test_t2_cli_approve_then_replay_then_tamper(bank_url: str, tmp_path: Path) -
         == "POLICY_BLOCKED"
 
 
-# --- P3: the allowlist is the tenant's origin, never the console or other local services ---------
+# --- the allowlist is the tenant's origin, never the console or other local services ---------
 
-def test_p3_policy_is_bound_to_the_tenant_origin() -> None:
+def test_policy_is_bound_to_the_tenant_origin() -> None:
     policy = Policy.load(RAW_POLICY).bind("http://127.0.0.1:8600", deny_origins=["http://127.0.0.1:8700"])
     assert policy.url_allowed("http://127.0.0.1:8600/core/main.jsp")[0]
     for url in ("http://127.0.0.1:8700/i/iv-1/approve", "http://127.0.0.1:6379/", "http://localhost:9200/"):
@@ -168,9 +168,9 @@ def test_p3_policy_is_bound_to_the_tenant_origin() -> None:
         Policy.load(RAW_POLICY).bind("http://127.0.0.1:8700", deny_origins=["http://127.0.0.1:8700"])
 
 
-# --- P4: the console needs this run's token and refuses cross-site posts --------------------------
+# --- the console needs this run's token and refuses cross-site posts --------------------------
 
-def test_p4_console_requires_the_run_token_and_same_origin(tmp_path: Path) -> None:
+def test_console_requires_the_run_token_and_same_origin(tmp_path: Path) -> None:
     from mm.handoff.console import Console
     c = HandoffController(RunRecorder(tmp_path, "t", SECRETS))
     item = c.open(Kind.APPROVAL_REQUIRED, "cap", "click Confirm")
@@ -187,9 +187,9 @@ def test_p4_console_requires_the_run_token_and_same_origin(tmp_path: Path) -> No
         assert ok.status_code == 200 and c.get(item.id).status is Status.APPROVED
 
 
-# --- P5: any takeover counts as human control, captured or not ------------------------------------
+# --- any takeover counts as human control, captured or not ------------------------------------
 
-def test_p5_takeover_without_captured_actions_still_blocks_compilation(tmp_path: Path) -> None:
+def test_takeover_without_captured_actions_still_blocks_compilation(tmp_path: Path) -> None:
     from mm.artifact.compiler import CompileError, compile_run
     rec = RunRecorder(tmp_path, "discover", SECRETS)
     c = HandoffController(rec)
@@ -210,9 +210,9 @@ def test_p5_takeover_without_captured_actions_still_blocks_compilation(tmp_path:
         compile_run(result, "app.t.x", pack="none", policy=PERMISSIVE)
 
 
-# --- P6: a request blocked in the background is logged, not blamed on the next action -------------
+# --- a request blocked in the background is logged, not blamed on the next action -------------
 
-def test_p6_background_block_is_not_attributed_to_the_next_action(bank_url: str, tmp_path: Path) -> None:
+def test_background_block_is_not_attributed_to_the_next_action(bank_url: str, tmp_path: Path) -> None:
     from mm.cli import web_surface_factory
     rec = RunRecorder(tmp_path, "t", SECRETS)
     policy = _policy(bank_url)
@@ -231,9 +231,9 @@ def test_p6_background_block_is_not_attributed_to_the_next_action(bank_url: str,
     assert "background_requests_blocked" in (rec.dir / "events.jsonl").read_text()
 
 
-# --- P7: a console that cannot serve is an error, not a silent hang -------------------------------
+# --- a console that cannot serve is an error, not a silent hang -------------------------------
 
-def test_p7_console_on_a_busy_port_fails_fast(tmp_path: Path) -> None:
+def test_console_on_a_busy_port_fails_fast(tmp_path: Path) -> None:
     from mm.handoff.console import Console, ConsoleUnavailable
     c = HandoffController(RunRecorder(tmp_path, "t", SECRETS))
     squatter = socket.socket()
@@ -246,9 +246,9 @@ def test_p7_console_on_a_busy_port_fails_fast(tmp_path: Path) -> None:
         squatter.close()
 
 
-# --- P8: discovery reports errors as a status ------------------------------------------------------
+# --- discovery reports errors as a status ------------------------------------------------------
 
-def test_p8_discovery_error_is_a_status_not_a_traceback(tmp_path: Path) -> None:
+def test_discovery_error_is_a_status_not_a_traceback(tmp_path: Path) -> None:
     class Crash(FakeSurface):
         def observe(self, with_screenshot: bool = False) -> Observation:
             raise RuntimeError("Target page, context or browser has been closed")
@@ -260,16 +260,16 @@ def test_p8_discovery_error_is_a_status_not_a_traceback(tmp_path: Path) -> None:
     assert result.status == "error" and "browser has been closed" in result.summary
 
 
-# --- P9: the simulated operator never approves unless told to --------------------------------------
+# --- the simulated operator never approves unless told to --------------------------------------
 
-def test_p9_simulated_operator_rejects_by_default() -> None:
+def test_simulated_operator_rejects_by_default() -> None:
     from mm.handoff.operator import SimulatedOperator
     assert SimulatedOperator("http://x", page=None).decision == "reject"  # type: ignore[arg-type]
 
 
-# --- P10: form submits are "mutating": no approval needed, but never repeated ----------------------
+# --- form submits are "mutating": no approval needed, but never repeated ----------------------
 
-def test_p10_three_risk_levels() -> None:
+def test_three_risk_levels() -> None:
     policy = Policy.load(RAW_POLICY)
     assert policy.classify_control(ActionType.CLICK, "Continue") == "mutating"
     assert policy.classify_control(ActionType.CLICK, "Confirm") == "irreversible"
@@ -277,23 +277,23 @@ def test_p10_three_risk_levels() -> None:
     assert policy.classify_control(ActionType.CLICK, "Add Share Account") == "safe"  # just opens a form
 
 
-def test_p10_expiry_right_after_a_submit_is_not_replayed_blindly(bank_url: str, tmp_path: Path) -> None:
+def test_expiry_right_after_a_submit_is_not_replayed_blindly(bank_url: str, tmp_path: Path) -> None:
     bank.FAULTS.add("session_expired_on_submit")
     result = _live(bank_url, tmp_path, OPEN, OPEN_INPUTS, approval=_approved(OPEN))
     assert isinstance(result, ReplayFailure) and result.kind is FailureKind.UNSAFE_TO_REPEAT
     assert result.may_have_committed and len(bank.data.MEMBERS["10871"].accounts) == 2
 
 
-def test_p10_expiry_before_any_submit_still_restarts(bank_url: str, tmp_path: Path) -> None:
+def test_expiry_before_any_submit_still_restarts(bank_url: str, tmp_path: Path) -> None:
     bank.FAULTS.add("session_expired_on_detail")
     result = _live(bank_url, tmp_path, OPEN, OPEN_INPUTS, approval=_approved(OPEN))
     assert isinstance(result, ReplaySuccess), result
     assert [r.action for r in result.recoveries] == ["restarted"]
 
 
-# --- P11: evidence screenshots hide credentials too -----------------------------------------------
+# --- evidence screenshots hide credentials too -----------------------------------------------
 
-def test_p11_screenshots_mask_the_operator_identity(bank_url: str, tmp_path: Path) -> None:
+def test_screenshots_mask_the_operator_identity(bank_url: str, tmp_path: Path) -> None:
     surface = WebSurface(headless=True, mask_texts=SECRETS.values())
     try:
         surface.navigate(f"{bank_url}/login")
@@ -322,7 +322,7 @@ def _black_fraction(surface: WebSurface, png: bytes) -> float:
         page.close()
 
 
-def test_t4_masked_screenshots_hide_different_balances_identically(bank_url: str, tmp_path: Path) -> None:
+def test_masked_screenshots_hide_different_balances_identically(bank_url: str, tmp_path: Path) -> None:
     """Pixel-level: masked, the balance cell is (almost) entirely black for every member; unmasked it is not."""
     surface = WebSurface(headless=True, mask_texts=SECRETS.values())
     try:
@@ -348,9 +348,9 @@ def test_t4_masked_screenshots_hide_different_balances_identically(bank_url: str
         surface.close()
 
 
-# --- P12: intervention records are masked like everything else ------------------------------------
+# --- intervention records are masked like everything else ------------------------------------
 
-def test_p12_intervention_fields_are_pii_masked(tmp_path: Path) -> None:
+def test_intervention_fields_are_pii_masked(tmp_path: Path) -> None:
     rec = RunRecorder(tmp_path, "t", SECRETS)
     c = HandoffController(rec)
     item = c.open(Kind.UNRECOVERABLE_STATE, "cap", "balance $2,450.17 did not load", observed="SSN 123-45-6789 shown")
@@ -359,27 +359,27 @@ def test_p12_intervention_fields_are_pii_masked(tmp_path: Path) -> None:
     assert "2,450.17" not in saved and "123-45-6789" not in saved
 
 
-# --- P13: control only returns to automation from a human ------------------------------------------
+# --- control only returns to automation from a human ------------------------------------------
 
-def test_p13_lease_returns_to_agent_only_from_human() -> None:
+def test_lease_returns_to_agent_only_from_human() -> None:
     lease = ControlLease()
     with pytest.raises(ControlNotHeld):
         lease.to_agent("nobody handed it over")
     assert lease.state.epoch == 1
 
 
-# --- P14: the CLI works from any directory -----------------------------------------------------------
+# --- the CLI works from any directory -----------------------------------------------------------
 
-def test_p14_cli_runs_from_another_directory(tmp_path: Path) -> None:
+def test_cli_runs_from_another_directory(tmp_path: Path) -> None:
     out = subprocess.run([sys.executable, "-m", "mm.cli", "replay", str(BALANCE), "-p", "member_id=12ab",
                           "--headless"], capture_output=True, text=True, cwd=tmp_path,
                          env={**os.environ, "MM_RUNS_DIR": str(tmp_path / "runs")})
     assert json.loads(out.stdout)["kind"] == "INPUT_INVALID", out.stderr[-500:]
 
 
-# --- P16: after a handoff, detectors look at the screen before automation continues -----------------
+# --- after a handoff, detectors look at the screen before automation continues -----------------
 
-def test_p16_business_outcome_after_a_handoff_is_recognised(tmp_path: Path) -> None:
+def test_business_outcome_after_a_handoff_is_recognised(tmp_path: Path) -> None:
     from mm.artifact.schema import Capability
     from tests.fakes import approval_for
     cap = Capability.model_validate({
@@ -426,9 +426,9 @@ class _OverlayFirst(FakeSurface):
         return super().check(cp, timeout_ms)
 
 
-# --- P17 / T5 ---------------------------------------------------------------------------------------
+# --- no-operator wording and a visible browser for real handoffs ----------------------------------
 
-def test_p17_no_operator_is_not_described_as_an_operator_rejection(tmp_path: Path) -> None:
+def test_no_operator_is_not_described_as_an_operator_rejection(tmp_path: Path) -> None:
     class ConfirmPage(FakeSurface):
         def observe(self, with_screenshot: bool = False) -> Observation:
             return Observation(url="http://a/r", title="Review", elements=[ElementRef(ref="e1", role="button",
@@ -443,7 +443,7 @@ def test_p17_no_operator_is_not_described_as_an_operator_rejection(tmp_path: Pat
     assert "by the operator" not in router.sent[1] and "no operator" in router.sent[1].lower()
 
 
-def test_t5_escalate_without_simulation_forces_a_visible_browser(tmp_path: Path) -> None:
+def test_escalate_without_simulation_forces_a_visible_browser(tmp_path: Path) -> None:
     from mm.cli import _handoff
     from mm.config import get_settings
     _, _, headless = _handoff(RunRecorder(tmp_path, "t", SECRETS), get_settings(), True, None, True)

@@ -66,7 +66,10 @@ class LLMRouter:
             providers.append(Provider("groq", s.mm_primary_model, _client(s.mm_primary_base_url, key),
                                       {"reasoning_effort": "low"}))
         if key := _real_key(s.gemini_api_key):
-            providers.append(Provider("gemini", s.mm_fallback_model, _client(s.mm_fallback_base_url, key)))
+            client = _client(s.mm_fallback_base_url, key)
+            # A comma-separated list: each model is tried in turn (free-tier models are often "high demand").
+            for model in [m.strip() for m in s.mm_fallback_model.split(",") if m.strip()]:
+                providers.append(Provider("gemini", model, client))
         return cls(providers)
 
     def structured(

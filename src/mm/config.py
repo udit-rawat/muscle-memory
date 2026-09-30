@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: SecretStr | None = None
     mm_fallback_base_url: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
-    mm_fallback_model: str = "gemini-3.8-flash"
+    mm_fallback_model: str = "gemini-3.8-flash,gemini-3.1-flash-lite"  # comma-separated, tried in order
 
     # Mock bank target.
     mockbank_url: str = "http://127.0.0.1:8600"
